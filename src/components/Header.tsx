@@ -14,7 +14,7 @@ import {
 } from 'lucide-react';
 import { reminderApi, type UpdateReminderDetailsPayload } from '../lib/reminderApi';
 import toast from 'react-hot-toast';
-import { attendanceApi } from '../lib/api';
+// import { attendanceApi } from '../lib/api';
 
 /* ================= TYPES ================= */
 interface Reminder {
@@ -583,126 +583,110 @@ const Header: React.FC<HeaderProps> = ({ onToggleSidebar, reminders, refreshRemi
 
   const profileRef = useRef<HTMLDivElement>(null);
   const reminderRef = useRef<HTMLDivElement>(null);
-  const [isClockedIn, setIsClockedIn] = useState(false);
-  const [attendanceLoading, setAttendanceLoading] = useState(false);
-  const [todayHours, setTodayHours] = useState<number>(0);
-  const [liveSeconds, setLiveSeconds] = useState<number>(0);
-  const [_checkingStatus, setCheckingStatus] = useState(true);
-
-  // check attandence status 
-// console.log(checkingStatus)
-  // Function to format decimal hours (e.g., 1.5) i .nto HH:MM:SS
-  const formatTime = (totalHours: number) => {
-    const totalSeconds = Math.floor(totalHours * 3600) + liveSeconds;
-    const hrs = Math.floor(totalSeconds / 3600);
-    const mins = Math.floor((totalSeconds % 3600) / 60);
-    const secs = totalSeconds % 60;
-    return `${hrs.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-  };
-
-  // Inside your Header.tsx component
-  useEffect(() => {
-    const checkInitialStatus = async () => {
-      try {
-        const response = await attendanceApi.getStatus();
-        if (response.success && response.data) {
-          setIsClockedIn(response.data.isClockedIn);
-          
-          // 📍 CALCULATE LIVE SECONDS ON LOAD
-          if (response.data.isClockedIn && response.data.checkInTime) {
-            const checkInDate = new Date(response.data.checkInTime);
-            const now = new Date();
-            // Calculate difference in seconds
-            const diffInSeconds = Math.floor((now.getTime() - checkInDate.getTime()) / 1000);
-            setLiveSeconds(diffInSeconds > 0 ? diffInSeconds : 0);
-          }
-        }
-      } catch (error) {
-        console.error("Failed to sync attendance status", error);
-      } finally {
-        setCheckingStatus(false);
-      }
-    };
-  
-    checkInitialStatus();
-  }, []);
-  // Live Timer Effect
-  useEffect(() => {
-    let interval: any;
-
-    if (isClockedIn) {
-      interval = setInterval(() => {
-        setLiveSeconds((prev) => prev + 1);
-      }, 1000);
-    } else {
-      setLiveSeconds(0); // Reset live counter when clocked out
-    }
-
-    return () => clearInterval(interval);
-  }, [isClockedIn]);
-
-  // Fetch initial hours
-  const fetchWorkHours = async () => {
-    const res = await attendanceApi.getWorkHours();
-    if (res.success && res.data) {
-      setTodayHours(res.data.totalHours);
-    }
-  };
-
-  useEffect(() => {
-    fetchWorkHours();
-  }, []);
- 
-
-// --- ATTENDANCE LOGIC ---
-// --- ATTENDANCE LOGIC ---
-const handleAttendanceAction = async () => {
-  setAttendanceLoading(true);
-  try {
-    // 📍 Always request location first, regardless of In or Out
-    navigator.geolocation.getCurrentPosition(
-      async (position) => {
-        const { latitude, longitude } = position.coords;
-
-        if (!isClockedIn) {
-          // --- 🟢 CLOCK IN FLOW ---
-          const res = await attendanceApi.clockIn(latitude, longitude);
-          
-          if (res.success) {
-            setIsClockedIn(true);
-            toast.success("Clocked in successfully!");
-            fetchWorkHours(); // Get initial hours for the session base
-          } else {
-            toast.error(res.message || "Clock-in failed");
-          }
-        } else {
-          // --- 🔴 CLOCK OUT FLOW (FIXED) ---
-          // 📍 Now passing latitude and longitude to the API
-          const res = await attendanceApi.clockOut(latitude, longitude);
-          
-          if (res.success) {
-            setIsClockedIn(false);
-            setLiveSeconds(0); // Reset the live ticking counter
-            toast.success("Clocked out successfully!");
-            fetchWorkHours(); // Refresh to show the final total hours from DB
-          } else {
-            toast.error(res.message || "Clock-out failed");
-          }
-        }
-        setAttendanceLoading(false);
-      },
-      (_error) => {
-        // Handle location errors (e.g., user denied permission)
-        toast.error("Location access is required for attendance.");
-        setAttendanceLoading(false);
-      },
-      { enableHighAccuracy: true } // Ensures better precision for geofencing
-    );
-  } catch (err) {
-    toast.error("An unexpected error occurred");
-    setAttendanceLoading(false);
-  }
-};
+  /*
+   * Attendance clock-in/out is disabled for lead management access.
+   * Users can now use the lead app without enrolling in attendance.
+   *
+   * const [isClockedIn, setIsClockedIn] = useState(false);
+   * const [attendanceLoading, setAttendanceLoading] = useState(false);
+   * const [todayHours, setTodayHours] = useState<number>(0);
+   * const [liveSeconds, setLiveSeconds] = useState<number>(0);
+   * const [_checkingStatus, setCheckingStatus] = useState(true);
+   *
+   * const formatTime = (totalHours: number) => {
+   *   const totalSeconds = Math.floor(totalHours * 3600) + liveSeconds;
+   *   const hrs = Math.floor(totalSeconds / 3600);
+   *   const mins = Math.floor((totalSeconds % 3600) / 60);
+   *   const secs = totalSeconds % 60;
+   *   return `${hrs.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+   * };
+   *
+   * useEffect(() => {
+   *   const checkInitialStatus = async () => {
+   *     try {
+   *       const response = await attendanceApi.getStatus();
+   *       if (response.success && response.data) {
+   *         setIsClockedIn(response.data.isClockedIn);
+   *         if (response.data.isClockedIn && response.data.checkInTime) {
+   *           const checkInDate = new Date(response.data.checkInTime);
+   *           const now = new Date();
+   *           const diffInSeconds = Math.floor((now.getTime() - checkInDate.getTime()) / 1000);
+   *           setLiveSeconds(diffInSeconds > 0 ? diffInSeconds : 0);
+   *         }
+   *       }
+   *     } catch (error) {
+   *       console.error("Failed to sync attendance status", error);
+   *     } finally {
+   *       setCheckingStatus(false);
+   *     }
+   *   };
+   *
+   *   checkInitialStatus();
+   * }, []);
+   *
+   * useEffect(() => {
+   *   let interval: any;
+   *   if (isClockedIn) {
+   *     interval = setInterval(() => {
+   *       setLiveSeconds((prev) => prev + 1);
+   *     }, 1000);
+   *   } else {
+   *     setLiveSeconds(0);
+   *   }
+   *   return () => clearInterval(interval);
+   * }, [isClockedIn]);
+   *
+   * const fetchWorkHours = async () => {
+   *   const res = await attendanceApi.getWorkHours();
+   *   if (res.success && res.data) {
+   *     setTodayHours(res.data.totalHours);
+   *   }
+   * };
+   *
+   * useEffect(() => {
+   *   fetchWorkHours();
+   * }, []);
+   *
+   * const handleAttendanceAction = async () => {
+   *   setAttendanceLoading(true);
+   *   try {
+   *     navigator.geolocation.getCurrentPosition(
+   *       async (position) => {
+   *         const { latitude, longitude } = position.coords;
+   *         if (!isClockedIn) {
+   *           const res = await attendanceApi.clockIn(latitude, longitude);
+   *           if (res.success) {
+   *             setIsClockedIn(true);
+   *             toast.success("Clocked in successfully!");
+   *             fetchWorkHours();
+   *           } else {
+   *             toast.error(res.message || "Clock-in failed");
+   *           }
+   *         } else {
+   *           const res = await attendanceApi.clockOut(latitude, longitude);
+   *           if (res.success) {
+   *             setIsClockedIn(false);
+   *             setLiveSeconds(0);
+   *             toast.success("Clocked out successfully!");
+   *             fetchWorkHours();
+   *           } else {
+   *             toast.error(res.message || "Clock-out failed");
+   *           }
+   *         }
+   *         setAttendanceLoading(false);
+   *       },
+   *       (_error) => {
+   *         toast.error("Location access is required for attendance.");
+   *         setAttendanceLoading(false);
+   *       },
+   *       { enableHighAccuracy: true }
+   *     );
+   *   } catch (err) {
+   *     toast.error("An unexpected error occurred");
+   *     setAttendanceLoading(false);
+   *   }
+   * };
+   */
   /* ========== CLOSE DROPDOWNS ON OUTSIDE CLICK ========== */
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -766,7 +750,8 @@ const handleEditReminder = async (data: UpdateReminderDetailsPayload) => {
       {/* RIGHT */}
       <div className="flex items-center gap-4">
         
-{/* 📍 ATTENDANCE SECTION */}
+{/* Attendance clock-in/out hidden for lead management access. */}
+{/*
 <div className="flex items-center gap-3 mr-2 bg-gray-50 p-1.5 rounded-xl border border-gray-100">
           <div className="flex flex-col items-end px-2">
             <span className="text-[10px] uppercase font-bold text-gray-400 leading-none">
@@ -794,7 +779,9 @@ const handleEditReminder = async (data: UpdateReminderDetailsPayload) => {
               <><Clock className="w-4 h-4" /> <span className="hidden md:inline">Clock In</span></>
             )}
           </button>
-        </div>         {/* 🔔 REMINDER BELL */}
+        </div>
+*/}
+        {/* 🔔 REMINDER BELL */}
         <div className="relative" ref={reminderRef}>
           <button
             onClick={() => setShowReminderModal(true)}
@@ -1006,4 +993,3 @@ const handleEditReminder = async (data: UpdateReminderDetailsPayload) => {
 };
 
 export default Header;
-
