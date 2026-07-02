@@ -10,6 +10,7 @@ import type {
   AssignLeadForm,
   AddNoteForm,
   DashboardStats,
+  PeriodLeadStats,
   LeadFilters,
   ExcelUploadResponse,
   CreateUserForm,
@@ -131,7 +132,7 @@ export const authApi = {
     }
   },
 
-  updateProfile: async (profileData: { name: string; email?: string }): Promise<ApiResponse<User>> => {
+  updateProfile: async (profileData: { name: string; email?: string; phone?: string }): Promise<ApiResponse<User>> => {
     try {
       const response = await api.put('/auth/profile', profileData);
       return handleResponse(response);
@@ -681,6 +682,21 @@ export const dashboardApi = {
   getLeadMetrics: async (): Promise<ApiResponse<{ conversionRate: number; leadWon: number; leadsThisWeek: number; leadsThisMonth: number }>> => {
     try {
       const response = await api.get('/dashboard/metrics');
+      return handleResponse(response);
+    } catch (error) {
+      return handleError(error);
+    }
+  },
+
+  getPeriodStats: async (
+    period: 'today' | 'week' | 'month' | 'custom',
+    range?: { from?: string; to?: string }
+  ): Promise<ApiResponse<PeriodLeadStats>> => {
+    try {
+      const params = new URLSearchParams({ period });
+      if (range?.from) params.append('from', range.from);
+      if (range?.to) params.append('to', range.to);
+      const response = await api.get(`/dashboard/period-stats?${params.toString()}`);
       return handleResponse(response);
     } catch (error) {
       return handleError(error);

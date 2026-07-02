@@ -1,299 +1,245 @@
-import * as React from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import React, { Suspense, lazy } from 'react';
+import { BrowserRouter as Router, Navigate, Route, Routes } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import Layout from './components/Layout';
 import Login from './components/Login';
-import Dashboard from './pages/Dashboard';
-import AllLeads from './pages/AllLeads';
-import MyLeads from './pages/MyLeads';
-import AddLead from './pages/AddLead';
-import SmartImportLeads from './pages/SmartImportLeads';
-import AssignLeads from './pages/AssignLeads';
-import LeadDetails from './pages/LeadDetails';
-import UserManagement from './pages/UserManagement';
-import StatusManagement from './pages/StatusManagement';
-import Analytics from './pages/Analytics';
-import Settings from './pages/Settings';
-import WhatsAppChatUI from './pages/whatsapp';
 import RestrictedPopup from './components/RestrictedAccess';
-import AttendanceReport from './pages/AttendanceManagement';
-// import WhatsAppChatUI from './pages/whatsapp';
 
-// Protected Route component
+const Dashboard = lazy(() => import('./pages/Dashboard'));
+const Calls = lazy(() => import('./pages/Calls'));
+const AllLeads = lazy(() => import('./pages/AllLeads'));
+const MyLeads = lazy(() => import('./pages/MyLeads'));
+const AddLead = lazy(() => import('./pages/AddLead'));
+const SmartImportLeads = lazy(() => import('./pages/SmartImportLeads'));
+const AssignLeads = lazy(() => import('./pages/AssignLeads'));
+const LeadDetails = lazy(() => import('./pages/LeadDetails'));
+const UserManagement = lazy(() => import('./pages/UserManagement'));
+const StatusManagement = lazy(() => import('./pages/StatusManagement'));
+const Analytics = lazy(() => import('./pages/Analytics'));
+const Settings = lazy(() => import('./pages/Settings'));
+const WhatsAppChatUI = lazy(() => import('./pages/whatsapp'));
+const AttendanceReport = lazy(() => import('./pages/AttendanceManagement'));
+
+const LoadingScreen: React.FC<{ label?: string }> = ({ label = 'Loading workspace' }) => (
+  <div className="app-loading">
+    <div className="app-loading__panel">
+      <div className="loading-spinner" />
+      {label}
+    </div>
+  </div>
+);
+
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { isAuthenticated, isLoading } = useAuth();
 
-  if (isLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
-        <div className="flex flex-col items-center gap-4">
-          <div className="loading-spinner w-8 h-8 text-blue-600"></div>
-          <p className="text-gray-600">Loading...</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (!isAuthenticated) {
-    return <Navigate to="/login" replace />;
-  }
+  if (isLoading) return <LoadingScreen />;
+  if (!isAuthenticated) return <Navigate to="/login" replace />;
 
   return <>{children}</>;
 };
 
-// Public Route component (for login page)
 const PublicRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { isAuthenticated, isLoading } = useAuth();
 
-  if (isLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
-        <div className="flex flex-col items-center gap-4">
-          <div className="loading-spinner w-8 h-8 text-blue-600"></div>
-          <p className="text-gray-600">Loading...</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (isAuthenticated) {
-    return <Navigate to="/dashboard" replace />;
-  }
+  if (isLoading) return <LoadingScreen />;
+  if (isAuthenticated) return <Navigate to="/dashboard" replace />;
 
   return <>{children}</>;
 };
 
+const ProtectedPage: React.FC<{ children: React.ReactNode }> = ({ children }) => (
+  <ProtectedRoute>
+    <Layout>{children}</Layout>
+  </ProtectedRoute>
+);
 
+const NotFound: React.FC = () => (
+  <div className="card mx-auto max-w-lg">
+    <div className="card-body text-center">
+      <h1 className="text-2xl font-extrabold text-gray-900">Page Not Found</h1>
+      <p className="mt-2 text-gray-600">The requested CRM page does not exist.</p>
+      <a href="/dashboard" className="btn btn-primary mt-5">
+        Go to Dashboard
+      </a>
+    </div>
+  </div>
+);
 
-const AppRoutes: React.FC = () => {
-  return (
+const AppRoutes: React.FC = () => (
+  <Suspense fallback={<LoadingScreen label="Loading module" />}>
     <Routes>
-      {/* Public routes */}
-      <Route 
-        path="/login" 
+      <Route
+        path="/login"
         element={
           <PublicRoute>
             <Login />
           </PublicRoute>
-        } 
+        }
       />
 
-      {/* Protected routes */}
-      <Route 
-        path="/dashboard" 
+      <Route
+        path="/dashboard"
         element={
-          <ProtectedRoute>
-            <Layout>
-              <Dashboard />
-            </Layout>
-          </ProtectedRoute>
-        } 
+          <ProtectedPage>
+            <Dashboard />
+          </ProtectedPage>
+        }
+      />
+      <Route
+        path="/calls"
+        element={
+          <ProtectedPage>
+            <Calls />
+          </ProtectedPage>
+        }
+      />
+      <Route
+        path="/leads"
+        element={
+          <ProtectedPage>
+            <AllLeads />
+          </ProtectedPage>
+        }
+      />
+      <Route
+        path="/my-leads"
+        element={
+          <ProtectedPage>
+            <MyLeads />
+          </ProtectedPage>
+        }
+      />
+      <Route
+        path="/leads/new"
+        element={
+          <ProtectedPage>
+            <AddLead />
+          </ProtectedPage>
+        }
+      />
+      <Route
+        path="/leads/import"
+        element={
+          <ProtectedPage>
+            <SmartImportLeads />
+          </ProtectedPage>
+        }
+      />
+      <Route
+        path="/leads/import/smart"
+        element={
+          <ProtectedPage>
+            <SmartImportLeads />
+          </ProtectedPage>
+        }
+      />
+      <Route
+        path="/leads/assign"
+        element={
+          <ProtectedPage>
+            <AssignLeads />
+          </ProtectedPage>
+        }
+      />
+      <Route
+        path="/leads/:id"
+        element={
+          <ProtectedPage>
+            <LeadDetails />
+          </ProtectedPage>
+        }
+      />
+      <Route
+        path="/users"
+        element={
+          <ProtectedPage>
+            <UserManagement />
+          </ProtectedPage>
+        }
+      />
+      <Route
+        path="/statuses"
+        element={
+          <ProtectedPage>
+            <StatusManagement />
+          </ProtectedPage>
+        }
+      />
+      <Route
+        path="/analytics"
+        element={
+          <ProtectedPage>
+            <Analytics />
+          </ProtectedPage>
+        }
+      />
+      <Route
+        path="/settings"
+        element={
+          <ProtectedPage>
+            <Settings />
+          </ProtectedPage>
+        }
+      />
+      <Route
+        path="/WhatsAppChat"
+        element={
+          <ProtectedPage>
+            <WhatsAppChatUI />
+          </ProtectedPage>
+        }
+      />
+      <Route
+        path="/attendance-management"
+        element={
+          <ProtectedPage>
+            <AttendanceReport />
+          </ProtectedPage>
+        }
       />
 
-      {/* Lead Management Routes */}
-      <Route 
-        path="/leads" 
-        element={
-          <ProtectedRoute>
-            <Layout>
-              <AllLeads />
-            </Layout>
-          </ProtectedRoute>
-        } 
-      />
-
-      <Route 
-        path="/my-leads" 
-        element={
-          <ProtectedRoute>
-            <Layout>
-              <MyLeads />
-            </Layout>
-          </ProtectedRoute>
-        } 
-      />
-
-      <Route 
-        path="/leads/new" 
-        element={
-          <ProtectedRoute>
-            <Layout>
-              <AddLead />
-            </Layout>
-          </ProtectedRoute>
-        } 
-      />
-
-      <Route 
-        path="/leads/import" 
-        element={
-          <ProtectedRoute>
-            <Layout>
-              <SmartImportLeads />
-            </Layout>
-          </ProtectedRoute>
-        } 
-      />
-
-      <Route 
-        path="/leads/import/smart" 
-        element={
-          <ProtectedRoute>
-            <Layout>
-              <SmartImportLeads />
-            </Layout>
-          </ProtectedRoute>
-        } 
-      />
-
-      <Route 
-        path="/leads/assign" 
-        element={
-          <ProtectedRoute>
-            <Layout>
-              <AssignLeads />
-            </Layout>
-          </ProtectedRoute>
-        } 
-      />
-
-      <Route 
-        path="/leads/:id" 
-        element={
-          <ProtectedRoute>
-            <Layout>
-              <LeadDetails />
-            </Layout>
-          </ProtectedRoute>
-        } 
-      />
-
-      <Route 
-        path="/users" 
-        element={
-          <ProtectedRoute>
-            <Layout>
-              <UserManagement />
-            </Layout>
-          </ProtectedRoute>
-        } 
-      />
-
-      <Route 
-        path="/statuses" 
-        element={
-          <ProtectedRoute>
-            <Layout>
-              <StatusManagement />
-            </Layout>
-          </ProtectedRoute>
-        } 
-      />
-
-      <Route 
-        path="/analytics" 
-        element={
-          <ProtectedRoute>
-            <Layout>
-              <Analytics />
-            </Layout>
-          </ProtectedRoute>
-        } 
-      />
-
-      <Route 
-        path="/settings" 
-        element={
-          <ProtectedRoute>
-            <Layout>
-              <Settings />
-            </Layout>
-          </ProtectedRoute>
-        } 
-      />
-       <Route 
-        path="/WhatsAppChat" 
-        element={
-          <ProtectedRoute>
-            <Layout>
-              <WhatsAppChatUI />
-            </Layout>
-          </ProtectedRoute>
-        } 
-      />
-  <Route 
-  path="/attendance-management"
-  element={
-    <ProtectedRoute> {/* Ensure this prop is passed if your component needs it */}
-      <Layout>
-        <AttendanceReport />
-      </Layout>
-    </ProtectedRoute>
-  } 
-/>
-
-      {/* Default redirect */}
       <Route path="/" element={<Navigate to="/dashboard" replace />} />
-      
-      {/* 404 Not Found */}
-      <Route 
-        path="*" 
+      <Route
+        path="*"
         element={
-          <ProtectedRoute>
-            <Layout>
-              <div className="text-center py-16">
-                <div className="max-w-md mx-auto">
-                  <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                    <span className="text-red-600 text-2xl">❌</span>
-                  </div>
-                  <h2 className="text-2xl font-bold text-gray-900 mb-2">Page Not Found</h2>
-                  <p className="text-gray-600 mb-4">The page you're looking for doesn't exist.</p>
-                  <a href="/dashboard" className="btn btn-primary">
-                    Go to Dashboard
-                  </a>
-                </div>
-              </div>
-            </Layout>
-          </ProtectedRoute>
-        } 
+          <ProtectedPage>
+            <NotFound />
+          </ProtectedPage>
+        }
       />
     </Routes>
-  );
-};
+  </Suspense>
+);
 
-const App: React.FC = () => {
-  return (
-    <AuthProvider>
-      <Router>
-        <div className="App">
-          <AppRoutes />
-          {/*  ADD THE RESTRICTED POPUP HERE */}
-          <RestrictedPopup />
-          <Toaster 
-            position="top-right"
-            toastOptions={{
-              duration: 4000,
-              style: {
-                background: '#363636',
-                color: '#fff',
-              },
-              success: {
-                style: {
-                  background: '#059669',
-                },
-              },
-              error: {
-                style: {
-                  background: '#dc2626',
-                },
-              },
-            }}
-          />
-        </div>
-      </Router>
-    </AuthProvider>
-  );
-};
+const App: React.FC = () => (
+  <AuthProvider>
+    <Router>
+      <AppRoutes />
+      <RestrictedPopup />
+      <Toaster
+        position="top-right"
+        toastOptions={{
+          duration: 4000,
+          style: {
+            background: '#111827',
+            color: '#fff',
+            borderRadius: '8px'
+          },
+          success: {
+            style: {
+              background: '#047857'
+            }
+          },
+          error: {
+            style: {
+              background: '#be123c'
+            }
+          }
+        }}
+      />
+    </Router>
+  </AuthProvider>
+);
 
 export default App;

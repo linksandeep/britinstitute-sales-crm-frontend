@@ -14,7 +14,29 @@ export default defineConfig({
       output: {
         manualChunks(id) {
           if (id.includes('node_modules')) {
-            return 'vendor';
+            const packagePath = id.split('node_modules/')[1] || ''
+
+            if (
+              packagePath.startsWith('recharts/') ||
+              packagePath.startsWith('d3-') ||
+              packagePath.startsWith('victory-vendor/')
+            ) {
+              return 'charts'
+            }
+
+            if (packagePath.startsWith('lucide-react/')) {
+              return 'icons'
+            }
+
+            if (
+              packagePath.startsWith('axios/') ||
+              packagePath.startsWith('socket.io-client/') ||
+              packagePath.startsWith('engine.io-client/')
+            ) {
+              return 'network'
+            }
+
+            return 'vendor'
           }
         },
       },

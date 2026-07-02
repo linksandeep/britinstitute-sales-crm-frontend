@@ -1,22 +1,22 @@
 import React, { useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { authApi } from '../lib/api';
+import type { User as AppUser } from '../types';
 import { 
   User,
   Save,
   AlertTriangle,
   Eye,
-  EyeOff,
-  Trash2
+  EyeOff
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
+type ProfileUser = AppUser & { phone?: string };
+
 const Settings: React.FC = () => {
   const { user } = useAuth();
+  const profileUser = user as ProfileUser | null;
   const [loading, setLoading] = useState(false);
-  const [resetLoading, setResetLoading] = useState(false);
-  const [showResetConfirm, setShowResetConfirm] = useState(false);
-  const [resetConfirmText, setResetConfirmText] = useState('');
 
   // Password visibility states
   const [showPasswords, setShowPasswords] = useState({
@@ -29,8 +29,7 @@ const Settings: React.FC = () => {
   const [profileData, setProfileData] = useState({
     name: user?.name || '',
     email: user?.email || '',
-    // Cast user to 'any' to bypass the missing 'phone' property error
-    phone: (user as any)?.phone || '', 
+    phone: profileUser?.phone || '',
     currentPassword: '',
     newPassword: '',
     confirmPassword: ''
@@ -41,14 +40,11 @@ const Settings: React.FC = () => {
     setLoading(true);
 
     try {
-      // Check if name or phone changed (using casting for phone comparison)
-      if (profileData.name !== user?.name || profileData.phone !== (user as any)?.phone) {
-        
-        // Cast the payload to 'any' to avoid errors if updateProfile type doesn't accept phone yet
+      if (profileData.name !== user?.name || profileData.phone !== profileUser?.phone) {
         const response = await authApi.updateProfile({
           name: profileData.name,
           phone: profileData.phone 
-        } as any);
+        });
         
         if (!response.success) {
           throw new Error(response.message || 'Failed to update profile');
@@ -93,30 +89,6 @@ const Settings: React.FC = () => {
       toast.error(error instanceof Error ? error.message : 'Failed to update settings');
     } finally {
       setLoading(false);
-    }
-  };
-
-  const handleDangerReset = async () => {
-    if (resetConfirmText !== 'RESET') {
-      toast.error('Please type "RESET" to confirm');
-      return;
-    }
-
-    setResetLoading(true);
-    try {
-      const response = await authApi.dangerReset();
-      
-      if (!response.success) {
-        throw new Error(response.message || 'Failed to reset system');
-      }
-      
-      toast.success('System reset successfully! All leads and users (except the current user) have been removed.');
-      setShowResetConfirm(false);
-      setResetConfirmText('');
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Failed to reset system');
-    } finally {
-      setResetLoading(false);
     }
   };
 
@@ -283,88 +255,6 @@ const Settings: React.FC = () => {
           </div>
         </form>
       </div>
-
-      {/* Danger Zone - Admin Only */}
-      {user?.role === 'admin' && (
-        <div className="card border-red-200">
-          <div className="card-header border-red-200">
-            <div className="flex items-center gap-2">
-              <AlertTriangle className="w-5 h-5 text-red-600" />
-              <h3 className="text-lg font-semibold text-red-800">Danger Zone</h3>
-            </div>
-            <p className="text-sm text-red-600 mt-1">
-              These actions cannot be undone. Please proceed with caution.
-            </p>
-          </div>
-          
-          <div className="card-body">
-            <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-              <div className="flex items-start gap-3">
-                <Trash2 className="w-5 h-5 text-red-600 mt-0.5" />
-                <div className="flex-1">
-                  <h4 className="font-medium text-red-900">Reset System Data</h4>
-                  <p className="text-sm text-red-700 mt-1">
-                    This will permanently delete all leads and remove all users except the current user. 
-                    This action cannot be undone.
-                  </p>
-                  
-                  {!showResetConfirm ? (
-                    <button
-                      onClick={() => setShowResetConfirm(true)}
-                      className="mt-3 bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
-                    >
-                      Reset System Data
-                    </button>
-                  ) : (
-                    <div className="mt-3 space-y-3">
-                      <div>
-                        <label className="block text-sm font-medium text-red-900 mb-2">
-                          Type "RESET" to confirm:
-                        </label>
-                        <input
-                          type="text"
-                          value={resetConfirmText}
-                          onChange={(e) => setResetConfirmText(e.target.value)}
-                          className="form-input max-w-xs"
-                          placeholder="Type RESET"
-                        />
-                      </div>
-                      
-                      <div className="flex gap-2">
-                        <button
-                          onClick={handleDangerReset}
-                          disabled={resetLoading || resetConfirmText !== 'RESET'}
-                          className="bg-red-600 hover:bg-red-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
-                        >
-                          {resetLoading ? (
-                            <>
-                              <div className="loading-spinner mr-2"></div>
-                              Resetting...
-                            </>
-                          ) : (
-                            'Confirm Reset'
-                          )}
-                        </button>
-                        
-                        <button
-                          onClick={() => {
-                            setShowResetConfirm(false);
-                            setResetConfirmText('');
-                          }}
-                          disabled={resetLoading}
-                          className="bg-gray-300 hover:bg-gray-400 text-gray-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

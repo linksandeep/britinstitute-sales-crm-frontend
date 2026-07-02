@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { leadApi, statusApi } from '../lib/api';
 import type { Lead, LeadStatus } from '../types';
 import LeadWhatsAppButton from '../components/LeadWhatsAppButton';
+import QuickLeadSearch from '../components/QuickLeadSearch';
 import { 
   Phone,
   Mail,
@@ -44,33 +45,6 @@ const MyLeads: React.FC = () => {
   const [updatingStatus, setUpdatingStatus] = useState(false);
   const [showAssignmentModal, setShowAssignmentModal] = useState(false);
   const [selectedAssignmentLead, setSelectedAssignmentLead] = useState<any>(null);
-  const [quickSearchQuery, setQuickSearchQuery] = useState('');
-const [quickSearchResults, setQuickSearchResults] = useState<Lead[]>([]);
-const [showQuickPopup, setShowQuickPopup] = useState(false);
-
-const handleQuickSearch = async () => {
-  if (!quickSearchQuery.trim()) {
-    setQuickSearchResults([]);
-    setShowQuickPopup(false);
-    return;
-  }
-
-  try {
-    const res = await leadApi.getLeadsBySearch(quickSearchQuery);
-
-    if (res.success && res.data) {
-      setQuickSearchResults(res.data);
-      setShowQuickPopup(true);
-    }
-  } catch (error) {
-    toast.error('Quick search failed');
-  }
-};
-useEffect(() => {
-  const closePopup = () => setShowQuickPopup(false);
-  window.addEventListener('click', closePopup);
-  return () => window.removeEventListener('click', closePopup);
-}, []);
 
   // Initialize state from URL parameters on component mount
   useEffect(() => {
@@ -293,16 +267,37 @@ useEffect(() => {
 
   const stats = allStats;
 
-  if (loading) {
+  const isInitialLoading =
+    loading &&
+    (currentView === 'folders'
+      ? availableFolders.length === 0 && Object.keys(statusStats).length === 0
+      : leads.length === 0);
+
+  if (isInitialLoading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <div className="loading-spinner w-8 h-8"></div>
+      <div className="page-stack">
+        <div className="page-header">
+          <div className="w-full max-w-xl">
+            <div className="skeleton skeleton-line mb-4 w-36" />
+            <div className="skeleton mb-3 h-9 w-72" />
+            <div className="skeleton skeleton-line w-full" />
+          </div>
+        </div>
+        <div className="metric-grid">
+          {Array.from({ length: 4 }).map((_, index) => (
+            <div key={index} className="metric-card">
+              <div className="skeleton skeleton-line mb-5 w-28" />
+              <div className="skeleton mb-4 h-8 w-20" />
+              <div className="skeleton skeleton-line w-32" />
+            </div>
+          ))}
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="space-y-6">
+    <div className="page-stack">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -334,80 +329,7 @@ useEffect(() => {
             }
           </p>
         </div>
-        <div
-  className="relative w-full max-w-sm"
-  onClick={(e) => e.stopPropagation()}
->
-  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-
-  <input
-    type="text"
-    placeholder="Quick search: name, email, or phone"
-    value={quickSearchQuery}
-    onChange={(e) => {
-      setQuickSearchQuery(e.target.value);
-      handleQuickSearch();
-    }}
-    className="
-      input input-bordered
-      w-full
-      pl-10
-      h-11
-      text-sm
-      focus:outline-none
-      focus:ring-2
-      focus:ring-primary
-    "
-  />
-
-  {/* QUICK SEARCH POPUP */}
-  {showQuickPopup && quickSearchResults.length > 0 && (
-    <div
-      className="
-        absolute z-50 mt-2 w-full
-        bg-white rounded-lg shadow-2xl
-        border border-gray-200
-        max-h-80 overflow-y-auto
-      "
-    >
-      {quickSearchResults.slice(0, 8).map((lead) => (
-        <div
-          key={lead._id}
-          onClick={() => {
-            setShowQuickPopup(false);
-            setQuickSearchQuery('');
-            window.open(`/leads/${lead._id}`, '_blank');
-          }}
-          className="
-            px-4 py-2.5 cursor-pointer
-            transition hover:bg-blue-50
-          "
-        >
-          <div className="font-medium text-sm text-gray-900 truncate">
-            {lead.name}
-          </div>
-
-          <div className="flex items-center gap-2 text-xs text-gray-600 mt-0.5 truncate">
-            <Mail className="w-3.5 h-3.5 text-gray-400" />
-            {lead.email}
-          </div>
-
-          <div className="flex items-center gap-2 text-xs text-gray-500 mt-0.5">
-            <Phone className="w-3.5 h-3.5 text-gray-400" />
-            {lead.phone}
-          </div>
-        </div>
-      ))}
-    </div>
-  )}
-</div>
-<button
-  onClick={handleQuickSearch}
-  className="btn btn-primary h-11 flex items-center gap-2"
->
-  <Search className="w-4 h-4" />
-  Quick Search
-</button>
+        <QuickLeadSearch className="w-full max-w-sm" />
 
         <div className="flex items-center gap-3">
           <button
@@ -703,7 +625,7 @@ useEffect(() => {
                     className={`hover:bg-gray-50 transition-colors cursor-pointer ${
                       selectedLeads.includes(lead._id) ? 'bg-blue-50' : index % 2 === 0 ? 'bg-white' : 'bg-gray-25'
                     }`}
-                    onClick={() => window.open(`/leads/${lead._id}`, '_blank')}
+                    onClick={() => navigate(`/leads/${lead._id}`)}
                   >
                     <td className="whitespace-nowrap py-4 px-6" onClick={(e) => e.stopPropagation()}>
                       <input
@@ -810,7 +732,7 @@ useEffect(() => {
                             {lead.notes[lead.notes.length - 1].content}
                           </div>
                           <div className="text-xs text-gray-500">
-                            {lead.notes.length} note{lead.notes.length > 1 ? 's' : ''} • {new Date(lead.notes[lead.notes.length - 1].createdAt).toLocaleDateString()}
+                            {lead.notes.length} note{lead.notes.length > 1 ? 's' : ''} - {new Date(lead.notes[lead.notes.length - 1].createdAt).toLocaleDateString()}
                           </div>
                         </div>
                       ) : (
@@ -945,7 +867,7 @@ useEffect(() => {
     >
       <div className="flex justify-between items-center mb-4">
         <h3 className="text-lg font-semibold">
-          Assignment History – {selectedAssignmentLead.name}
+          Assignment History - {selectedAssignmentLead.name}
         </h3>
         <button
           onClick={() => setShowAssignmentModal(false)}

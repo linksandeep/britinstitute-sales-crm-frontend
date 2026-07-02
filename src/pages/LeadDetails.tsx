@@ -1,48 +1,115 @@
-import React, { useState, useEffect } from 'react';
-import { useParams, useNavigate, useLocation } from 'react-router-dom';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { leadApi } from '../lib/api';
-import type { Lead, LeadStatus, LeadSource, LeadPriority } from '../types';
+import { leadApi, userApi } from '../lib/api';
+import type { Lead, LeadPriority, LeadSource, LeadStatus, User as AppUser } from '../types';
 import LeadWhatsAppButton from '../components/LeadWhatsAppButton';
-import { 
-  ArrowLeft,
-  Edit,
-  Save,
-  X,
-  Plus,
-  MessageSquare,
-  User,
-  Mail,
-  Phone,
-  Calendar,
-  Target,
-  Star,
-  CheckCircle,
-  Clock,
+import {
   AlertCircle,
-  FolderOpen
+  ArrowLeft,
+  Calendar,
+  Clock,
+  Edit,
+  FileText,
+  Mail,
+  MessageSquare,
+  Phone,
+  Plus,
+  Save,
+  UserPlus,
+  X
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { reminderApi } from '../lib/reminderApi';
+
+type LeadDetailTab = 'activity' | 'calls' | 'notes' | 'tasks';
+
+interface ReturnState {
+  returnTo?: string;
+  currentPage?: number;
+  leadsPerPage?: number;
+  searchQuery?: string;
+  currentView?: string;
+  selectedFolder?: string;
+  statusFilter?: string;
+  folderFilter?: string;
+  filters?: {
+    status?: string[];
+    source?: string[];
+    priority?: string[];
+  };
+}
+
+const statusOptions: LeadStatus[] = [
+  'New',
+  'Contacted',
+  'Follow-up',
+  'Interested',
+  'Qualified',
+  'Proposal Sent',
+  'Negotiating',
+  'Sales Done',
+  'DNP',
+  'Not Interested',
+  'Wrong Number',
+  'Call Back'
+];
+
+const priorityOptions: LeadPriority[] = ['High', 'Medium', 'Low'];
+
+const sourceOptions: LeadSource[] = [
+  'Website',
+  'Social Media',
+  'Referral',
+  'Import',
+  'Manual',
+  'Cold Call',
+  'Email Campaign',
+  'strategy_call_modal',
+  'data_analytics_landing_page'
+];
+
+const formatSource = (source: string) =>
+  source
+    .split('_')
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+
+const statusTone = (status: LeadStatus) => {
+  const normalized = status.toLowerCase();
+  if (['sales done', 'qualified', 'interested'].includes(normalized)) return 'status-pill status-pill--green';
+  if (['follow-up', 'call back', 'contacted'].includes(normalized)) return 'status-pill status-pill--amber';
+  if (['not interested', 'wrong number', 'dnp'].includes(normalized)) return 'status-pill status-pill--rose';
+  return 'status-pill status-pill--blue';
+};
+
+const priorityTone = (priority: LeadPriority) => {
+  if (priority === 'High') return 'text-rose-600 bg-rose-50 border-rose-200';
+  if (priority === 'Medium') return 'text-amber-700 bg-amber-50 border-amber-200';
+  return 'text-green-700 bg-green-50 border-green-200';
+};
 
 const LeadDetails: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const location = useLocation();
   const { user } = useAuth();
-  
+
   const [lead, setLead] = useState<Lead | null>(null);
+  const [users, setUsers] = useState<AppUser[]>([]);
   const [loading, setLoading] = useState(true);
-  const [isEditing, setIsEditing] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [addingNote, setAddingNote] = useState(false);
+  const [assigning, setAssigning] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [activeTab, setActiveTab] = useState<LeadDetailTab>('activity');
   const [newNote, setNewNote] = useState('');
+  const [addingNote, setAddingNote] = useState(false);
+  const [selectedAssignee, setSelectedAssignee] = useState('');
   const [showReminderForm, setShowReminderForm] = useState(false);
   const [reminderTitle, setReminderTitle] = useState('');
   const [reminderNote, setReminderNote] = useState('');
   const [remindAt, setRemindAt] = useState('');
-  
-  // Form data for editing
+
   const [formData, setFormData] = useState({
     name: '',
     email: '',
@@ -55,544 +122,466 @@ const LeadDetails: React.FC = () => {
     source: 'Manual' as LeadSource
   });
 
-  const statusOptions: LeadStatus[] = [
-    'New', 'Contacted', 'Follow-up', 'Interested', 'Qualified', 
-    'Proposal Sent', 'Negotiating', 'Sales Done', 'DNP', 'Not Interested', 'Wrong Number','Call Back'
-  ];
+  const canManage = user?.role === 'admin';
+  const canEdit = canManage || lead?.assignedTo === user?._id;
 
-  const priorityOptions: LeadPriority[] = ['High', 'Medium', 'Low'];
+  const syncLeadState = (nextLead: Lead) => {
+    setLead(nextLead);
+    setSelectedAssignee(nextLead.assignedToUser?._id || nextLead.assignedTo || '');
+    setFormData({
+      name: nextLead.name || '',
+      email: nextLead.email || '',
+      phone: nextLead.phone || '',
+      whatsapp: nextLead.whatsapp || '',
+      position: nextLead.position || '',
+      folder: nextLead.folder || '',
+      status: nextLead.status || 'New',
+      priority: nextLead.priority || 'Medium',
+      source: nextLead.source || 'Manual'
+    });
+  };
 
-  const sourceOptions: LeadSource[] = [
-    'Website', 'Social Media', 'Referral', 'Import', 'Manual', 'Cold Call', 'Email Campaign'
-  ];
+  const fetchLead = useCallback(async () => {
+    if (!id) return;
+
+    setLoading(true);
+    const response = await leadApi.getLead(id);
+
+    if (response.success && response.data) {
+      syncLeadState(response.data);
+    } else {
+      toast.error(response.message || 'Failed to fetch lead details');
+      navigate('/leads');
+    }
+
+    setLoading(false);
+  }, [id, navigate]);
+
+  const fetchUsers = useCallback(async () => {
+    if (!canManage) return;
+    const response = await userApi.getAllUsers();
+
+    if (response.success && response.data) {
+      setUsers(response.data.filter((item) => item.isActive));
+    }
+  }, [canManage]);
 
   useEffect(() => {
-    if (id) {
-      fetchLead();
-    }
-  }, [id]);
+    fetchLead();
+  }, [fetchLead]);
 
-  const fetchLead = async () => {
-    try {
-      setLoading(true);
-      const response = await leadApi.getLead(id!);
-      
-      if (response.success && response.data) {
-        setLead(response.data);
-        setFormData({
-          name: response.data.name,
-          email: response.data.email,
-          phone: response.data.phone,
-          whatsapp: response.data.whatsapp || '',
-          position: response.data.position,
-          folder: response.data.folder,
-          status: response.data.status,
-          priority: response.data.priority,
-          source: response.data.source
-        });
-      } else {
-        toast.error(response.message || 'Failed to fetch lead details');
-        navigate('/leads');
-      }
-    } catch (error) {
-      toast.error('Failed to fetch lead details');
-      navigate('/leads');
-    } finally {
-      setLoading(false);
+  useEffect(() => {
+    fetchUsers();
+  }, [fetchUsers]);
+
+  const sortedNotes = useMemo(
+    () =>
+      [...(lead?.notes || [])].sort(
+        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      ),
+    [lead?.notes]
+  );
+
+  const handleGoBack = () => {
+    const state = location.state as ReturnState | null;
+
+    if (state?.returnTo) {
+      const params = new URLSearchParams();
+
+      if (state.currentPage && state.currentPage > 1) params.set('page', state.currentPage.toString());
+      if (state.leadsPerPage && state.leadsPerPage !== 10) params.set('size', state.leadsPerPage.toString());
+      if (state.searchQuery) params.set('search', state.searchQuery);
+      if (state.currentView === 'leads' && state.selectedFolder) params.set('folder', state.selectedFolder);
+      if (state.statusFilter) params.set('status', state.statusFilter);
+      if (state.folderFilter) params.set('folderFilter', state.folderFilter);
+      if (state.filters?.status?.length) params.set('statusFilter', state.filters.status.join(','));
+      if (state.filters?.source?.length) params.set('sourceFilter', state.filters.source.join(','));
+      if (state.filters?.priority?.length) params.set('priorityFilter', state.filters.priority.join(','));
+
+      const queryString = params.toString();
+      navigate(queryString ? `${state.returnTo}?${queryString}` : state.returnTo, { replace: true });
+      return;
     }
+
+    navigate('/leads');
   };
- 
-  const createReminder = async () => {
-    if (!lead) return; // silent guard (NO alert)
 
-    await reminderApi.createReminder({
-      leadId: lead._id,
-      title: reminderTitle,
-      note: reminderNote,
-      remindAt: remindAt, // already ISO from input
+  const handleSave = async () => {
+    if (!id) return;
+
+    setSaving(true);
+    const response = await leadApi.updateLead(id, formData);
+
+    if (response.success && response.data) {
+      syncLeadState(response.data);
+      setIsEditing(false);
+      toast.success('Lead updated successfully');
+    } else {
+      toast.error(response.message || 'Failed to update lead');
+    }
+
+    setSaving(false);
+  };
+
+  const handleAssignLead = async () => {
+    if (!lead || !selectedAssignee) {
+      toast.error('Please select an employee');
+      return;
+    }
+
+    setAssigning(true);
+    const response = await leadApi.assignLeads({
+      leadIds: [lead._id],
+      assignToUserId: selectedAssignee
     });
 
-    setShowReminderForm(false);
-    setReminderTitle('');
-    setReminderNote('');
-    setRemindAt('');
-
-    toast.success('Reminder set');
-  };
-  
-  
-  const handleSave = async () => {
-    try {
-      setSaving(true);
-      const response = await leadApi.updateLead(id!, formData);
-      
-      if (response.success && response.data) {
-        setLead(response.data);
-        setIsEditing(false);
-        toast.success('Lead updated successfully');
-      } else {
-        toast.error(response.message || 'Failed to update lead');
-      }
-    } catch (error) {
-      toast.error('Failed to update lead');
-    } finally {
-      setSaving(false);
+    if (response.success) {
+      toast.success('Lead assigned successfully');
+      await fetchLead();
+    } else {
+      toast.error(response.message || 'Failed to assign lead');
     }
+
+    setAssigning(false);
+  };
+
+  const handleUnassignLead = async () => {
+    if (!lead) return;
+
+    setAssigning(true);
+    const response = await leadApi.unassignLeads({ leadIds: [lead._id] });
+
+    if (response.success) {
+      toast.success('Lead unassigned successfully');
+      setSelectedAssignee('');
+      await fetchLead();
+    } else {
+      toast.error(response.message || 'Failed to unassign lead');
+    }
+
+    setAssigning(false);
   };
 
   const handleAddNote = async () => {
-    if (!newNote.trim()) {
+    if (!lead || !newNote.trim()) {
       toast.error('Please enter a note');
       return;
     }
 
-    try {
-      setAddingNote(true);
-      const response = await leadApi.addNote({
-        leadId: id!,
-        content: newNote.trim()
-      });
-      
-      if (response.success && response.data) {
-        setLead(response.data);
-        setNewNote('');
-        toast.success('Note added successfully');
-      } else {
-        toast.error(response.message || 'Failed to add note');
-      }
-    } catch (error) {
-      toast.error('Failed to add note');
-    } finally {
-      setAddingNote(false);
-    }
-  };
+    setAddingNote(true);
+    const response = await leadApi.addNote({
+      leadId: lead._id,
+      content: newNote.trim()
+    });
 
-  const handleGoBack = () => {
-    const state = location.state as any;
-    
-    if (state && state.returnTo) {
-      // Build the URL with the preserved state
-      const params = new URLSearchParams();
-      
-      if (state.currentPage && state.currentPage > 1) {
-        params.set('page', state.currentPage.toString());
-      }
-      if (state.leadsPerPage && state.leadsPerPage !== 10) {
-        params.set('size', state.leadsPerPage.toString());
-      }
-      if (state.searchQuery) {
-        params.set('search', state.searchQuery);
-      }
-      if (state.currentView === 'leads' && state.selectedFolder) {
-        params.set('folder', state.selectedFolder);
-      }
-      
-      // For MyLeads specific filters
-      if (state.statusFilter) {
-        params.set('status', state.statusFilter);
-      }
-      if (state.folderFilter) {
-        params.set('folderFilter', state.folderFilter);
-      }
-      
-      // For AllLeads specific filters
-      if (state.filters) {
-        if (state.filters.status && state.filters.status.length > 0) {
-          params.set('statusFilter', state.filters.status.join(','));
-        }
-        if (state.filters.source && state.filters.source.length > 0) {
-          params.set('sourceFilter', state.filters.source.join(','));
-        }
-        if (state.filters.priority && state.filters.priority.length > 0) {
-          params.set('priorityFilter', state.filters.priority.join(','));
-        }
-      }
-      
-      const queryString = params.toString();
-      const url = queryString ? `${state.returnTo}?${queryString}` : state.returnTo;
-      
-      navigate(url, { replace: true });
+    if (response.success && response.data) {
+      syncLeadState(response.data);
+      setNewNote('');
+      toast.success('Note added successfully');
     } else {
-      // Fallback: go back in browser history or to default page
-      if (window.history.length > 1) {
-        navigate(-1);
-      } else {
-        navigate('/leads');
-      }
+      toast.error(response.message || 'Failed to add note');
     }
+
+    setAddingNote(false);
   };
 
-  const getStatusColor = (status: LeadStatus): string => {
-    const colors: Record<LeadStatus, string> = {
-      'New': 'bg-blue-100 text-blue-800',
-      'Contacted': 'bg-yellow-100 text-yellow-800', 
-      'Interested': 'bg-green-100 text-green-800',
-      'Not Interested': 'bg-red-100 text-red-800',
-      'Follow-up': 'bg-orange-100 text-orange-800',
-      'Qualified': 'bg-purple-100 text-purple-800',
-      'Proposal Sent': 'bg-indigo-100 text-indigo-800',
-      'Negotiating': 'bg-pink-100 text-pink-800',
-      'Sales Done': 'bg-teal-100 text-teal-800',
-      'DNP': 'bg-slate-100 text-slate-800',
-      'Wrong Number': 'bg-gray-100 text-gray-800',
-      'Call Back': 'bg-cyan-100 text-cyan-800'
-    };
-    return colors[status] || 'bg-gray-100 text-gray-800';
-  };
+  const createReminder = async () => {
+    if (!lead || !reminderTitle.trim() || !remindAt) {
+      toast.error('Please enter title and reminder time');
+      return;
+    }
 
-  const getPriorityColor = (priority: LeadPriority): string => {
-    const colors: Record<LeadPriority, string> = {
-      'High': 'text-red-600',
-      'Medium': 'text-yellow-600',
-      'Low': 'text-green-600'
-    };
-    return colors[priority];
-  };
+    const response = await reminderApi.createReminder({
+      leadId: lead._id,
+      title: reminderTitle.trim(),
+      note: reminderNote.trim(),
+      remindAt
+    });
 
-  const getPriorityIcon = (priority: LeadPriority) => {
-    if (priority === 'High') return <AlertCircle className="w-4 h-4" />;
-    if (priority === 'Medium') return <Clock className="w-4 h-4" />;
-    return <CheckCircle className="w-4 h-4" />;
+    if (response.success) {
+      setShowReminderForm(false);
+      setReminderTitle('');
+      setReminderNote('');
+      setRemindAt('');
+      toast.success('Reminder set');
+    } else {
+      toast.error(response.message || 'Failed to set reminder');
+    }
   };
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <div className="loading-spinner w-8 h-8"></div>
+      <div className="page-stack">
+        <div className="skeleton h-10 w-72" />
+        <div className="grid grid-cols-1 gap-5 xl:grid-cols-[320px_1fr_360px]">
+          <div className="skeleton h-[560px]" />
+          <div className="skeleton h-[560px]" />
+          <div className="skeleton h-[560px]" />
+        </div>
       </div>
     );
   }
 
   if (!lead) {
     return (
-      <div className="text-center py-16">
-        <AlertCircle className="w-12 h-12 text-gray-300 mx-auto mb-3" />
-        <h3 className="text-lg font-medium text-gray-900 mb-2">Lead not found</h3>
-        <p className="text-gray-500 mb-4">The lead you're looking for doesn't exist or you don't have access to it.</p>
-        <button onClick={handleGoBack} className="btn btn-primary">
-          Go back to leads
-        </button>
+      <div className="card mx-auto max-w-lg">
+        <div className="card-body text-center">
+          <AlertCircle className="mx-auto mb-3 h-12 w-12 text-gray-300" />
+          <h1 className="text-xl font-extrabold text-gray-900">Lead not found</h1>
+          <p className="mt-2 text-gray-500">The lead does not exist or you do not have access.</p>
+          <button type="button" onClick={handleGoBack} className="btn btn-primary mt-5">
+            Back to leads
+          </button>
+        </div>
       </div>
     );
   }
 
-  const canEdit = user?.role === 'admin' || lead.assignedTo === user?._id;
+  const ownerName = lead.assignedToUser?.name || 'Unassigned';
 
   return (
-    <div className="max-w-6xl mx-auto space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <button
-            onClick={handleGoBack}
-            className="btn btn-secondary"
-          >
-            <ArrowLeft className="w-4 h-4" />
-            Back to Leads
+    <div className="lead-detail-page">
+      <div className="lead-detail-topbar">
+        <button type="button" className="btn btn-secondary" onClick={handleGoBack}>
+          <ArrowLeft className="h-4 w-4" />
+          Back to leads
+        </button>
+        <div className="lead-detail-topbar__actions">
+          <button type="button" className="btn btn-secondary" onClick={() => setShowReminderForm(true)}>
+            <Clock className="h-4 w-4" />
+            Set Reminder
           </button>
-          <div>
-            <h1 className="text-3xl font-bold text-gray-900">{lead.name}</h1>
-            <p className="text-gray-600 mt-1">{lead.position}</p>
-          </div>
+          {canEdit && (
+            <>
+              {isEditing ? (
+                <>
+                  <button type="button" className="btn btn-secondary" onClick={() => setIsEditing(false)} disabled={saving}>
+                    <X className="h-4 w-4" />
+                    Cancel
+                  </button>
+                  <button type="button" className="btn btn-primary" onClick={handleSave} disabled={saving}>
+                    {saving ? <div className="loading-spinner" /> : <Save className="h-4 w-4" />}
+                    Save
+                  </button>
+                </>
+              ) : (
+                <button type="button" className="btn btn-primary" onClick={() => setIsEditing(true)}>
+                  <Edit className="h-4 w-4" />
+                  Edit Lead
+                </button>
+              )}
+            </>
+          )}
         </div>
-        
-        {canEdit && (
-          <div className="flex items-center gap-2">
-            {isEditing ? (
-              <>
-                <button
-                  onClick={() => setIsEditing(false)}
-                  className="btn btn-secondary"
-                  disabled={saving}
-                >
-                  <X className="w-4 h-4" />
-                  Cancel
-                </button>
-                <button
-                  onClick={handleSave}
-                  disabled={saving}
-                  className="btn btn-primary"
-                >
-                  {saving ? (
-                    <>
-                      <div className="loading-spinner mr-2"></div>
-                      Saving...
-                    </>
-                  ) : (
-                    <>
-                      <Save className="w-4 h-4" />
-                      Save Changes
-                    </>
-                  )}
-                </button>
-              </>
-            ) : (
-              <button
-                onClick={() => setIsEditing(true)}
-                className="btn btn-primary"
-              >
-                <Edit className="w-4 h-4" />
-                Edit Lead
-              </button>
-            )}
-          </div>
-        )}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Lead Information */}
-        <div className="lg:col-span-2 space-y-6">
-          {/* Basic Information */}
-          <div className="card">
-            <div className="card-header">
-              <h3 className="text-lg font-semibold">Lead Information</h3>
-            </div>
-            <div className="card-body">
-              {isEditing ? (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="form-group">
-                    <label className="form-label">Full Name</label>
-                    <input
-                      type="text"
-                      className="form-input"
-                      value={formData.name}
-                      onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
-                      required
-                    />
-                  </div>
-                  <div className="form-group">
-                    <label className="form-label">Email</label>
-                    <input
-                      type="email"
-                      className="form-input"
-                      value={formData.email}
-                      onChange={(e) => setFormData(prev => ({ ...prev, email: e.target.value }))}
-                      required
-                    />
-                  </div>
-                  <div className="form-group">
-                    <label className="form-label">Phone</label>
-                    <input
-                      type="tel"
-                      className="form-input"
-                      value={formData.phone}
-                      onChange={(e) => setFormData(prev => ({ ...prev, phone: e.target.value }))}
-                      required
-                    />
-                  </div>
-                  <div className="form-group">
-                    <label className="form-label">Whatsapp</label>
-                    <input
-                      type="tel"
-                      className="form-input"
-                      value={formData.whatsapp}
-                      onChange={(e) => setFormData(prev => ({ ...prev, whatsapp: e.target.value }))}
-                      placeholder="Optional"
-                    />
-                  </div>
-                  <div className="form-group">
-                    <label className="form-label">Position</label>
-                    <input
-                      type="text"
-                      className="form-input"
-                      value={formData.position}
-                      onChange={(e) => setFormData(prev => ({ ...prev, position: e.target.value }))}
-                    />
-                  </div>
-                  <div className="form-group">
-                    <label className="form-label">Folder</label>
-                    <input
-                      type="text"
-                      className="form-input"
-                      value={formData.folder}
-                      onChange={(e) => setFormData(prev => ({ ...prev, folder: e.target.value }))}
-                      placeholder="e.g., UK, USA, Germany"
-                    />
-                  </div>
-                  <div className="form-group md:col-span-2">
-                    <label className="form-label">Source</label>
-                    <select
-                      className="form-input w-full md:w-1/2"
-                      value={formData.source}
-                      onChange={(e) => setFormData(prev => ({ ...prev, source: e.target.value as LeadSource }))}
-                    >
-                      {sourceOptions.map(source => (
-                        <option key={source} value={source}>{source}</option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-              ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div className="space-y-4">
-                    <div className="flex items-center gap-3">
-                      <User className="w-5 h-5 text-gray-400" />
-                      <div>
-                        <p className="text-sm font-medium text-gray-500">Full Name</p>
-                        <p className="text-gray-900">{lead.name}</p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <Mail className="w-5 h-5 text-gray-400" />
-                      <div>
-                        <p className="text-sm font-medium text-gray-500">Email</p>
-                        <a href={`mailto:${lead.email}`} className="text-blue-600 hover:text-blue-800">
-                          {lead.email}
-                        </a>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <Phone className="w-5 h-5 text-gray-400" />
-                      <div>
-                        <p className="text-sm font-medium text-gray-500">Phone</p>
-                        <a href={`tel:${lead.phone}`} className="text-blue-600 hover:text-blue-800">
-                          {lead.phone}
-                        </a>
-                      </div>
-                    </div>
-                    
-                    {(lead.whatsapp || lead.phone) && (
-                      <div className="flex items-center gap-3">
-                        <div>
-                          <p className="text-sm font-medium text-gray-500">WhatsApp</p>
-                          <LeadWhatsAppButton lead={lead} className="text-base" />
-                        </div>
-                      </div>
-                    )}
+      <div className="lead-detail-grid">
+        <aside className="lead-profile-panel">
+          <div className="lead-profile-panel__avatar">{lead.name.charAt(0).toUpperCase()}</div>
+          <h1 className="lead-profile-panel__name">{lead.name}</h1>
+          <p className="lead-profile-panel__role">{lead.position || 'Lead'}</p>
 
-                  </div>
-                  <div className="space-y-4">
-                    <div className="flex items-center gap-3">
-                      <Star className="w-5 h-5 text-gray-400" />
-                      <div>
-                        <p className="text-sm font-medium text-gray-500">Position</p>
-                        <p className="text-gray-900">{lead.position}</p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <FolderOpen className="w-5 h-5 text-gray-400" />
-                      <div>
-                        <p className="text-sm font-medium text-gray-500">Folder</p>
-                        <p className="text-gray-900">{lead.folder || 'Uncategorized'}</p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <Target className="w-5 h-5 text-gray-400" />
-                      <div>
-                        <p className="text-sm font-medium text-gray-500">Source</p>
-                        <p className="text-gray-900">{lead.source}</p>
-                      </div>
-                    </div>
-                    <button
-                      className="text-[16px] text-gray-500 font-medium hover:text-blue-600 transition-colors"
-                      onClick={() => setShowReminderForm(true)}
-                    >
-                      ⏰ Set Reminder
-                    </button>
-                  </div>
-                </div>
-              )}
+          <div className="lead-profile-panel__actions">
+            <a href={`mailto:${lead.email}`} className="icon-button" title="Email lead">
+              <Mail className="h-4 w-4" />
+            </a>
+            <a href={`tel:${lead.phone}`} className="icon-button" title="Call lead">
+              <Phone className="h-4 w-4" />
+            </a>
+            <LeadWhatsAppButton lead={lead} className="icon-button" />
+          </div>
+
+          <div className="lead-profile-panel__section">
+            <div className="lead-field">
+              <span>Email</span>
+              <a href={`mailto:${lead.email}`}>{lead.email || 'Not available'}</a>
+            </div>
+            <div className="lead-field">
+              <span>Phone</span>
+              <a href={`tel:${lead.phone}`}>{lead.phone || 'Not available'}</a>
+            </div>
+            <div className="lead-field">
+              <span>WhatsApp</span>
+              <span>{lead.whatsapp || lead.phone || 'Not available'}</span>
+            </div>
+            <div className="lead-field">
+              <span>Folder</span>
+              <span>{lead.folder || 'Uncategorized'}</span>
             </div>
           </div>
 
-          {/* Notes Section */}
-          <div className="card">
-            <div className="card-header">
-              <div className="flex items-center justify-between">
-                <h3 className="text-lg font-semibold">Notes & Interactions</h3>
+          <div className="lead-profile-panel__tabs">
+            <button type="button" className="active">Lead Profile</button>
+            <button type="button">Company</button>
+          </div>
+
+          <div className="lead-profile-panel__section">
+            <div className="lead-field">
+              <span>Created</span>
+              <span>{new Date(lead.createdAt).toLocaleDateString()}</span>
+            </div>
+            <div className="lead-field">
+              <span>Last updated</span>
+              <span>{new Date(lead.updatedAt).toLocaleDateString()}</span>
+            </div>
+            <div className="lead-field">
+              <span>Source</span>
+              <span>{formatSource(lead.source)}</span>
+            </div>
+          </div>
+        </aside>
+
+        <main className="lead-workspace-panel">
+          <div className="lead-tabs" role="tablist" aria-label="Lead detail sections">
+            {[
+              ['activity', 'Activity'],
+              ['calls', 'Calls'],
+              ['notes', 'Notes'],
+              ['tasks', 'Tasks']
+            ].map(([tab, label]) => (
+              <button
+                key={tab}
+                type="button"
+                className={activeTab === tab ? 'active' : ''}
+                onClick={() => setActiveTab(tab as LeadDetailTab)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          <section className="lead-workspace-panel__body">
+            {activeTab === 'activity' && (
+              <div className="lead-activity-stack">
+                <div>
+                  <h2>Upcoming activity</h2>
+                  <div className="lead-activity-item">
+                    <span className="timeline-dot">
+                      <Phone className="h-4 w-4" />
+                    </span>
+                    <div className="lead-activity-item__content">
+                      <div className="lead-activity-item__header">
+                        <div>
+                          <h3>Phone follow-up</h3>
+                          <p>Owner: {ownerName}</p>
+                        </div>
+                        <span className={statusTone(lead.status)}>{lead.status}</span>
+                      </div>
+                      <p className="lead-activity-note">
+                        Review lead details, call the prospect, then update disposition and notes.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div>
+                  <h2>Activity history</h2>
+                  {sortedNotes.length > 0 ? (
+                    sortedNotes.map((note) => (
+                      <div key={note.id} className="lead-activity-item">
+                        <span className="timeline-dot">
+                          <MessageSquare className="h-4 w-4" />
+                        </span>
+                        <div className="lead-activity-item__content">
+                          <div className="lead-activity-item__header">
+                            <div>
+                              <h3>{note.createdBy?.name || 'Team member'} added a note</h3>
+                              <p>{new Date(note.createdAt).toLocaleString()}</p>
+                            </div>
+                          </div>
+                          <p className="lead-activity-note">{note.content}</p>
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="lead-empty-state">
+                      <MessageSquare className="h-10 w-10" />
+                      <h3>No activity recorded yet</h3>
+                      <p>Add a note after calls, WhatsApp messages, or follow-ups.</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {activeTab === 'calls' && (
+              <div className="lead-empty-state">
+                <Phone className="h-10 w-10" />
+                <h3>No synced call records yet</h3>
+                <p>Real call logs and recordings will appear here after the phone service call-history API is connected.</p>
+                <a href={`tel:${lead.phone}`} className="btn btn-primary">
+                  <Phone className="h-4 w-4" />
+                  Call Now
+                </a>
+              </div>
+            )}
+
+            {activeTab === 'notes' && (
+              <div className="lead-notes-panel">
                 {canEdit && (
-                  <span className="text-sm text-gray-500">
-                    {lead.notes?.length || 0} note{(lead.notes?.length || 0) !== 1 ? 's' : ''}
-                  </span>
+                  <div className="lead-note-composer">
+                    <textarea
+                      value={newNote}
+                      onChange={(event) => setNewNote(event.target.value)}
+                      placeholder="Add a note about this lead..."
+                      className="form-input"
+                      rows={4}
+                    />
+                    <div className="flex justify-end">
+                      <button
+                        type="button"
+                        className="btn btn-primary"
+                        onClick={handleAddNote}
+                        disabled={addingNote || !newNote.trim()}
+                      >
+                        {addingNote ? <div className="loading-spinner" /> : <Plus className="h-4 w-4" />}
+                        Add Note
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {sortedNotes.length > 0 ? (
+                  sortedNotes.map((note) => (
+                    <div key={note.id} className="lead-note-card">
+                      <div className="lead-note-card__meta">
+                        <strong>{note.createdBy?.name || 'Team member'}</strong>
+                        <span>{new Date(note.createdAt).toLocaleString()}</span>
+                      </div>
+                      <p>{note.content}</p>
+                    </div>
+                  ))
+                ) : (
+                  <div className="lead-empty-state">
+                    <FileText className="h-10 w-10" />
+                    <h3>No notes yet</h3>
+                    <p>Use notes to track customer context, outcomes, and next steps.</p>
+                  </div>
                 )}
               </div>
-            </div>
-            <div className="card-body">
-              {/* Add Note Form */}
-              {canEdit && (
-                <div className="mb-6 p-4 bg-gray-50 rounded-lg">
-                  <div className="flex items-start gap-3">
-                    <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center flex-shrink-0">
-                      <User className="w-4 h-4 text-blue-600" />
-                    </div>
-                    <div className="flex-1">
-                      <textarea
-                        placeholder="Add a note about your interaction with this lead..."
-                        className="form-input resize-none"
-                        rows={3}
-                        value={newNote}
-                        onChange={(e) => setNewNote(e.target.value)}
-                      />
-                      <div className="mt-2 flex justify-end">
-                        <button
-                          onClick={handleAddNote}
-                          disabled={addingNote || !newNote.trim()}
-                          className="btn btn-primary btn-sm"
-                        >
-                          {addingNote ? (
-                            <>
-                              <div className="loading-spinner mr-2"></div>
-                              Adding...
-                            </>
-                          ) : (
-                            <>
-                              <Plus className="w-4 h-4" />
-                              Add Note
-                            </>
-                          )}
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
+            )}
 
-              {/* Notes List */}
-              {lead.notes && lead.notes.length > 0 ? (
-                <div className="space-y-4">
-                  {lead.notes
-                    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-                    .map((note) => (
-                    <div key={note.id} className="flex gap-3 p-3 bg-white border border-gray-200 rounded-lg">
-                      <div className="w-8 h-8 bg-gray-100 rounded-full flex items-center justify-center flex-shrink-0">
-                        <MessageSquare className="w-4 h-4 text-gray-600" />
-                      </div>
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className="text-sm font-medium text-gray-900">
-                            {note.createdBy?.name || 'Unknown User'}
-                          </span>
-                          <span className="text-xs text-gray-500">
-                            {new Date(note.createdAt).toLocaleString()}
-                          </span>
-                        </div>
-                        <p className="text-gray-700 whitespace-pre-wrap">{note.content}</p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="text-center py-8">
-                  <MessageSquare className="w-12 h-12 text-gray-300 mx-auto mb-3" />
-                  <h3 className="text-lg font-medium text-gray-900 mb-2">No notes yet</h3>
-                  <p className="text-gray-500">
-                    {canEdit 
-                      ? 'Add your first note to track interactions with this lead.'
-                      : 'No interactions have been recorded for this lead yet.'
-                    }
-                  </p>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
+            {activeTab === 'tasks' && (
+              <div className="lead-empty-state">
+                <Calendar className="h-10 w-10" />
+                <h3>No open tasks</h3>
+                <p>Create a reminder for the next call, meeting, or follow-up.</p>
+                <button type="button" className="btn btn-primary" onClick={() => setShowReminderForm(true)}>
+                  <Plus className="h-4 w-4" />
+                  Create Reminder
+                </button>
+              </div>
+            )}
+          </section>
+        </main>
 
-        {/* Sidebar */}
-        <div className="space-y-6">
-          {/* Status & Priority */}
+        <aside className="lead-side-panel">
           <div className="card">
             <div className="card-header">
-              <h3 className="text-lg font-semibold">Status & Priority</h3>
+              <div>
+                <h2 className="card-title">Lead Status</h2>
+                <p className="card-subtitle">Pipeline and priority</p>
+              </div>
             </div>
             <div className="card-body space-y-4">
               {isEditing ? (
@@ -602,10 +591,12 @@ const LeadDetails: React.FC = () => {
                     <select
                       className="form-input"
                       value={formData.status}
-                      onChange={(e) => setFormData(prev => ({ ...prev, status: e.target.value as LeadStatus }))}
+                      onChange={(event) => setFormData((current) => ({ ...current, status: event.target.value }))}
                     >
-                      {statusOptions.map(status => (
-                        <option key={status} value={status}>{status}</option>
+                      {statusOptions.map((status) => (
+                        <option key={status} value={status}>
+                          {status}
+                        </option>
                       ))}
                     </select>
                   </div>
@@ -614,145 +605,217 @@ const LeadDetails: React.FC = () => {
                     <select
                       className="form-input"
                       value={formData.priority}
-                      onChange={(e) => setFormData(prev => ({ ...prev, priority: e.target.value as LeadPriority }))}
+                      onChange={(event) =>
+                        setFormData((current) => ({ ...current, priority: event.target.value as LeadPriority }))
+                      }
                     >
-                      {priorityOptions.map(priority => (
-                        <option key={priority} value={priority}>{priority}</option>
+                      {priorityOptions.map((priority) => (
+                        <option key={priority} value={priority}>
+                          {priority}
+                        </option>
                       ))}
                     </select>
                   </div>
                 </>
               ) : (
                 <>
-                  <div>
-                    <p className="text-sm font-medium text-gray-500 mb-2">Status</p>
-                    <span className={`badge ${getStatusColor(lead.status)}`}>
-                      {lead.status}
-                    </span>
+                  <div className="lead-summary-row">
+                    <span>Status</span>
+                    <span className={statusTone(lead.status)}>{lead.status}</span>
                   </div>
-                  <div>
-                    <p className="text-sm font-medium text-gray-500 mb-2">Priority</p>
-                    <div className={`flex items-center gap-2 font-medium ${getPriorityColor(lead.priority)}`}>
-                      {getPriorityIcon(lead.priority)}
+                  <div className="lead-summary-row">
+                    <span>Priority</span>
+                    <span className={`rounded-full border px-3 py-1 text-xs font-extrabold ${priorityTone(lead.priority)}`}>
                       {lead.priority}
-                    </div>
+                    </span>
                   </div>
                 </>
               )}
             </div>
           </div>
 
-          {/* Assignment & Dates */}
           <div className="card">
             <div className="card-header">
-              <h3 className="text-lg font-semibold">Assignment & Timeline</h3>
+              <div>
+                <h2 className="card-title">Assignment</h2>
+                <p className="card-subtitle">Owner and handoff</p>
+              </div>
             </div>
             <div className="card-body space-y-4">
-              <div>
-                <p className="text-sm font-medium text-gray-500 mb-2">Assigned To</p>
-                {lead.assignedToUser ? (
-                  <div className="flex items-center gap-2">
-                    <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center">
-                      <span className="text-sm font-medium text-blue-600">
-                        {lead.assignedToUser.name.charAt(0).toUpperCase()}
-                      </span>
-                    </div>
-                    <div>
-                      <p className="font-medium text-gray-900">{lead.assignedToUser.name}</p>
-                      <p className="text-xs text-gray-500">{lead.assignedToUser.email}</p>
-                    </div>
-                  </div>
-                ) : (
-                  <span className="text-gray-400 text-sm">Unassigned</span>
-                )}
-              </div>
-
-              <div>
-                <p className="text-sm font-medium text-gray-500 mb-1">Created</p>
-                <div className="flex items-center gap-2 text-sm text-gray-600">
-                  <Calendar className="w-4 h-4" />
-                  {new Date(lead.createdAt).toLocaleDateString()}
-                </div>
-              </div>
-
-              <div>
-                <p className="text-sm font-medium text-gray-500 mb-1">Last Updated</p>
-                <div className="flex items-center gap-2 text-sm text-gray-600">
-                  <Clock className="w-4 h-4" />
-                  {new Date(lead.updatedAt).toLocaleDateString()}
-                </div>
-              </div>
-
-              {lead.leadScore && (
+              <div className="lead-owner-card">
+                <span className="avatar">{ownerName.charAt(0).toUpperCase()}</span>
                 <div>
-                  <p className="text-sm font-medium text-gray-500 mb-2">Lead Score</p>
-                  <div className="flex items-center gap-2">
-                    <div className="flex-1 bg-gray-200 rounded-full h-2">
-                      <div 
-                        className="bg-blue-600 h-2 rounded-full"
-                        style={{ width: `${lead.leadScore}%` }}
-                      ></div>
-                    </div>
-                    <span className="text-sm font-medium text-gray-900">{lead.leadScore}/100</span>
+                  <p>{ownerName}</p>
+                  <span>{lead.assignedToUser?.email || 'No employee assigned'}</span>
+                </div>
+              </div>
+
+              {canManage && (
+                <div className="space-y-3">
+                  <label className="form-label">Assign Lead</label>
+                  <select
+                    className="form-input"
+                    value={selectedAssignee}
+                    onChange={(event) => setSelectedAssignee(event.target.value)}
+                  >
+                    <option value="">Select employee</option>
+                    {users.map((employee) => (
+                      <option key={employee._id} value={employee._id}>
+                        {employee.name} - {employee.email}
+                      </option>
+                    ))}
+                  </select>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button type="button" className="btn btn-primary" onClick={handleAssignLead} disabled={assigning}>
+                      {assigning ? <div className="loading-spinner" /> : <UserPlus className="h-4 w-4" />}
+                      Assign
+                    </button>
+                    <button type="button" className="btn btn-secondary" onClick={handleUnassignLead} disabled={assigning}>
+                      Unassign
+                    </button>
                   </div>
                 </div>
               )}
             </div>
           </div>
-        </div>
-      </div>
-      
-      {/* ================= REMINDER MODAL ================= */}
-      {showReminderForm && (
-        <div
-          className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/40"
-          onClick={() => setShowReminderForm(false)}
-        >
-          <div
-            className="bg-white rounded-lg w-full max-w-md p-6 shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h3 className="text-lg font-semibold mb-4">
-              ⏰ Set Reminder
-            </h3>
 
-            <div className="space-y-4">
+          <div className="card">
+            <div className="card-header">
+              <div>
+                <h2 className="card-title">Lead Information</h2>
+                <p className="card-subtitle">Editable CRM fields</p>
+              </div>
+            </div>
+            <div className="card-body">
+              {isEditing ? (
+                <div className="space-y-4">
+                  <div className="form-group">
+                    <label className="form-label">Full Name</label>
+                    <input
+                      className="form-input"
+                      value={formData.name}
+                      onChange={(event) => setFormData((current) => ({ ...current, name: event.target.value }))}
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Email</label>
+                    <input
+                      type="email"
+                      className="form-input"
+                      value={formData.email}
+                      onChange={(event) => setFormData((current) => ({ ...current, email: event.target.value }))}
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Phone</label>
+                    <input
+                      className="form-input"
+                      value={formData.phone}
+                      onChange={(event) => setFormData((current) => ({ ...current, phone: event.target.value }))}
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">WhatsApp</label>
+                    <input
+                      className="form-input"
+                      value={formData.whatsapp}
+                      onChange={(event) => setFormData((current) => ({ ...current, whatsapp: event.target.value }))}
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Position</label>
+                    <input
+                      className="form-input"
+                      value={formData.position}
+                      onChange={(event) => setFormData((current) => ({ ...current, position: event.target.value }))}
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Folder</label>
+                    <input
+                      className="form-input"
+                      value={formData.folder}
+                      onChange={(event) => setFormData((current) => ({ ...current, folder: event.target.value }))}
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Source</label>
+                    <select
+                      className="form-input"
+                      value={formData.source}
+                      onChange={(event) =>
+                        setFormData((current) => ({ ...current, source: event.target.value as LeadSource }))
+                      }
+                    >
+                      {sourceOptions.map((source) => (
+                        <option key={source} value={source}>
+                          {formatSource(source)}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <div className="lead-summary-row">
+                    <span>Source</span>
+                    <strong>{formatSource(lead.source)}</strong>
+                  </div>
+                  <div className="lead-summary-row">
+                    <span>Folder</span>
+                    <strong>{lead.folder || 'Uncategorized'}</strong>
+                  </div>
+                  <div className="lead-summary-row">
+                    <span>Lead score</span>
+                    <strong>{lead.leadScore ?? 0}/100</strong>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </aside>
+      </div>
+
+      {showReminderForm && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/45 p-4">
+          <div className="w-full max-w-md rounded-lg bg-white shadow-2xl">
+            <div className="card-header">
+              <div>
+                <h3 className="card-title">Create Reminder</h3>
+                <p className="card-subtitle">{lead.name}</p>
+              </div>
+              <button type="button" className="icon-button" onClick={() => setShowReminderForm(false)}>
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="card-body space-y-4">
               <input
                 type="text"
-                placeholder="e.g. Call client"
+                placeholder="Reminder title"
                 className="form-input"
                 value={reminderTitle}
-                onChange={(e) => setReminderTitle(e.target.value)}
+                onChange={(event) => setReminderTitle(event.target.value)}
               />
-
               <textarea
                 placeholder="Optional note"
                 className="form-input"
                 value={reminderNote}
-                onChange={(e) => setReminderNote(e.target.value)}
+                onChange={(event) => setReminderNote(event.target.value)}
               />
-
               <input
                 type="datetime-local"
                 className="form-input"
                 value={remindAt}
-                onChange={(e) => setRemindAt(e.target.value)}
+                onChange={(event) => setRemindAt(event.target.value)}
               />
-            </div>
-
-            <div className="flex justify-end gap-3 mt-6">
-              <button
-                className="btn btn-secondary"
-                onClick={() => setShowReminderForm(false)}
-              >
-                Cancel
-              </button>
-              <button
-                className="btn btn-primary"
-                onClick={createReminder}
-              >
-                Save Reminder
-              </button>
+              <div className="flex justify-end gap-3">
+                <button type="button" className="btn btn-secondary" onClick={() => setShowReminderForm(false)}>
+                  Cancel
+                </button>
+                <button type="button" className="btn btn-primary" onClick={createReminder}>
+                  Save Reminder
+                </button>
+              </div>
             </div>
           </div>
         </div>

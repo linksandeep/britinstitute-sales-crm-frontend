@@ -80,7 +80,16 @@ export interface LeadNote {
   createdAt: string;
 }
 
-export type LeadSource = 'Website' | 'Social Media' | 'Referral' | 'Import' | 'Manual' | 'Cold Call' | 'Email Campaign';
+export type LeadSource =
+  | 'Website'
+  | 'Social Media'
+  | 'Referral'
+  | 'Import'
+  | 'Manual'
+  | 'Cold Call'
+  | 'Email Campaign'
+  | 'strategy_call_modal'
+  | 'data_analytics_landing_page';
 
 // LeadStatus is now dynamic - fetched from API
 export type LeadStatus = string;
@@ -131,6 +140,31 @@ export interface DashboardStats {
     count: number;
     percentage: number;
   }>;
+  lastUpdated: string;
+}
+
+export interface PeriodLeadStats {
+  period: 'today' | 'week' | 'month' | 'custom';
+  from: string;
+  to: string;
+  updatedLeads: number;
+  createdLeads: number;
+  assignedLeads: number;
+  unassignedLeads: number;
+  newLeads: number;
+  contactedLeads: number;
+  qualifiedLeads: number;
+  salesDone: number;
+  dnpLeads: number;
+  statusBreakdown: Array<{
+    _id: string;
+    count: number;
+  }>;
+  sourceBreakdown: Array<{
+    _id: string;
+    count: number;
+  }>;
+  recentUpdates: Lead[];
   lastUpdated: string;
 }
 

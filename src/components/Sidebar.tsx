@@ -2,19 +2,22 @@ import React from 'react';
 import { NavLink } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import {
-  LayoutDashboard,
-  UserPlus,
-  ClipboardList,
-  Upload,
-  TrendingUp,
-  Settings,
-  UserCheck,
-  FileSpreadsheet,
-  Target,
+  BarChart3,
   CalendarCheck,
-  MessageSquare
+  ClipboardList,
+  FileSpreadsheet,
+  Headphones,
+  LayoutDashboard,
+  PhoneCall,
+  Plug,
+  Settings,
+  SlidersHorizontal,
+  Target,
+  Upload,
+  UserCheck,
+  UserPlus,
 } from 'lucide-react';
-import type { NavItem } from '../types';
+import type { LucideIcon } from 'lucide-react';
 import Logo from './Logo';
 
 interface SidebarProps {
@@ -22,127 +25,122 @@ interface SidebarProps {
   onClose: () => void;
 }
 
+interface NavigationItem {
+  name: string;
+  href: string;
+  icon: LucideIcon;
+  adminOnly?: boolean;
+  badge?: string;
+}
+
+interface NavigationSection {
+  label: string;
+  items: NavigationItem[];
+}
+
 const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
   const { user } = useAuth();
 
-  const navigation: NavItem[] = [
-    { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
-    { name: 'All Leads', href: '/leads', icon: ClipboardList, adminOnly: true },
-    { name: 'My Leads', href: '/my-leads', icon: Target },
-    { name: 'Add Lead', href: '/leads/new', icon: UserPlus },
-    { name: 'Import Leads', href: '/leads/import', icon: Upload, adminOnly: true },
-    { name: 'Assign Leads', href: '/leads/assign', icon: FileSpreadsheet, adminOnly: true },
-    { name: 'User Management', href: '/users', icon: UserCheck, adminOnly: true },
-    { name: 'Analytics', href: '/analytics', icon: TrendingUp, adminOnly: true },
-    { name: 'Settings', href: '/settings', icon: Settings, adminOnly: true },
- // Ensure this matches the Route path exactly
- { 
-  name: "WhatsApp", 
-  href: "/WhatsAppChat", 
-  icon: MessageSquare,
-  adminOnly: true,
-  target: "_blank" 
-},
-{ 
-  name: "Attendance Management", 
-  href: "/attendance-management", // Must be lowercase to match Route
-  icon: CalendarCheck, 
-  adminOnly: true
-},
-
+  const sections: NavigationSection[] = [
+    {
+      label: 'Workspace',
+      items: [
+        { name: 'Command Center', href: '/dashboard', icon: LayoutDashboard },
+        { name: 'Analytics', href: '/analytics', icon: BarChart3, adminOnly: true },
+        { name: 'Attendance', href: '/attendance-management', icon: CalendarCheck, adminOnly: true }
+      ]
+    },
+    {
+      label: 'Call Center',
+      items: [
+        { name: 'Phone Calling', href: '/calls', icon: Headphones, badge: 'Live' },
+        { name: 'Call History', href: '/calls?view=history', icon: PhoneCall },
+        { name: 'Reports', href: '/analytics', icon: SlidersHorizontal, adminOnly: true }
+      ]
+    },
+    {
+      label: 'CRM',
+      items: [
+        { name: 'All Leads', href: '/leads', icon: ClipboardList, adminOnly: true },
+        { name: 'My Leads', href: '/my-leads', icon: Target },
+        { name: 'Add Lead', href: '/leads/new', icon: UserPlus },
+        { name: 'Import Leads', href: '/leads/import', icon: Upload, adminOnly: true },
+        { name: 'Assign Leads', href: '/leads/assign', icon: FileSpreadsheet, adminOnly: true }
+      ]
+    },
+    {
+      label: 'Administration',
+      items: [
+        { name: 'Users', href: '/users', icon: UserCheck, adminOnly: true },
+        { name: 'Statuses', href: '/statuses', icon: Plug, adminOnly: true },
+        { name: 'Settings', href: '/settings', icon: Settings, adminOnly: true }
+      ]
+    }
   ];
 
-  // Filter navigation based on user role
-  const filteredNavigation = navigation.filter(item => {
-    if (item.adminOnly && user?.role !== 'admin') {
-      return false;
+  const visibleSections = sections
+    .map((section) => ({
+      ...section,
+      items: section.items.filter((item) => !item.adminOnly || user?.role === 'admin')
+    }))
+    .filter((section) => section.items.length > 0);
+
+  const closeOnMobile = () => {
+    if (window.innerWidth < 1024) {
+      onClose();
     }
-    return true;
-  });
+  };
 
   return (
-    <div className={`sidebar ${isOpen ? 'open' : ''}`}>
-      <div className="flex flex-col h-full">
-        {/* Logo */}
+    <aside className={`sidebar ${isOpen ? 'open' : ''}`}>
+      <div className="flex min-h-full flex-col">
         <div className="sidebar-header">
-          <div className="flex items-center gap-3">
+          <div className="sidebar-brand">
             <Logo />
             <div>
-              <h1 className="text-lg font-bold text-gray-900">Lead Manager</h1>
-              <p className="text-xs text-gray-500">
-                {user?.role === 'admin' ? 'Admin Panel' : 'User Panel'}
-              </p>
+              <h1 className="sidebar-brand__title">Brit CRM</h1>
+              <p className="sidebar-brand__meta">Call Center Suite</p>
             </div>
           </div>
         </div>
 
-        {/* Navigation */}
-        <nav className="sidebar-nav flex-1">
-          {filteredNavigation.map((item) => {
-            const Icon = item.icon;
+        <nav className="sidebar-nav flex-1" aria-label="Primary navigation">
+          {visibleSections.map((section) => (
+            <div key={section.label} className="nav-section">
+              <div className="nav-section__label">{section.label}</div>
+              {section.items.map((item) => {
+                const Icon = item.icon;
 
-            // Handle links that should open in a new tab
-            if (item.target === "_blank") {
-              return (
-                <a
-                  key={item.name}
-                  href={item.href}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="nav-item"
-                  style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}
-                >
-                  <Icon className="w-5 h-5" />
-                  {item.name}
-                </a>
-              );
-            }
+                return (
+                  <NavLink
+                    key={item.name}
+                    to={item.href}
+                    end={item.href === '/leads' || item.href === '/dashboard'}
+                    className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
+                    onClick={closeOnMobile}
+                  >
+                    <Icon className="h-5 w-5" />
+                    <span>{item.name}</span>
+                    {item.badge && <span className="nav-item__badge">{item.badge}</span>}
+                  </NavLink>
+                );
+              })}
+            </div>
+          ))}
 
-            // Standard Internal Navigation
-            return (
-              <NavLink
-                key={item.name}
-                to={item.href}
-                end={item.href === "/leads"}
-                className={({ isActive }) =>
-                  `nav-item ${isActive ? 'active' : ''}`
-                }
-                onClick={() => {
-                  if (window.innerWidth < 1024) {
-                    onClose();
-                  }
-                }}
-              >
-                <Icon className="w-5 h-5" />
-                {item.name}
-              </NavLink>
-            );
-          })}
         </nav>
 
-        {/* User Info */}
-        <div className="p-6 border-t border-gray-200">
-          <div className="flex items-center gap-3 mb-3">
-            <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center">
-              <span className="text-sm font-medium text-blue-600">
-                {user?.name?.charAt(0).toUpperCase()}
-              </span>
+        <div className="sidebar-footer">
+          <div className="sidebar-user">
+            <div className="sidebar-user__avatar">{user?.name?.charAt(0).toUpperCase() || 'U'}</div>
+            <div className="min-w-0">
+              <p className="sidebar-user__name">{user?.name}</p>
+              <p className="sidebar-user__role">{user?.role} account</p>
             </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium text-gray-900 truncate">
-                {user?.name}
-              </p>
-              <p className="text-xs text-gray-500 capitalize">
-                {user?.role}
-              </p>
-            </div>
-          </div>
-          <div className="text-xs text-gray-500 text-center">
-            <p className="font-medium">Lead Manager v1.0.0</p>
           </div>
         </div>
       </div>
-    </div>
+    </aside>
   );
 };
 

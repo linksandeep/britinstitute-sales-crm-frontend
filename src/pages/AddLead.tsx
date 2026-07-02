@@ -40,7 +40,15 @@ const AddLead: React.FC = () => {
   const [creatingFolder] = useState(false);
 
   const sourceOptions: LeadSource[] = [
-    'Website', 'Social Media', 'Referral', 'Import', 'Manual', 'Cold Call', 'Email Campaign'
+    'Website',
+    'Social Media',
+    'Referral',
+    'Import',
+    'Manual',
+    'Cold Call',
+    'Email Campaign',
+    'strategy_call_modal',
+    'data_analytics_landing_page'
   ];
 
   const priorityOptions: LeadPriority[] = ['High', 'Medium', 'Low'];
