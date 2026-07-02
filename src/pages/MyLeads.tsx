@@ -4,6 +4,7 @@ import { leadApi, statusApi } from '../lib/api';
 import type { Lead, LeadStatus } from '../types';
 import LeadWhatsAppButton from '../components/LeadWhatsAppButton';
 import QuickLeadSearch from '../components/QuickLeadSearch';
+import { toLeadDateFilterParams, type DateFilterState } from '../lib/dateFilters';
 import { 
   Phone,
   Mail,
@@ -45,6 +46,9 @@ const MyLeads: React.FC = () => {
   const [updatingStatus, setUpdatingStatus] = useState(false);
   const [showAssignmentModal, setShowAssignmentModal] = useState(false);
   const [selectedAssignmentLead, setSelectedAssignmentLead] = useState<any>(null);
+  const [dateRange, setDateRange] = useState<DateFilterState>({ fromDate: '', toDate: '' });
+
+  const getDateFilters = () => toLeadDateFilterParams(dateRange, 'createdAt');
 
   // Initialize state from URL parameters on component mount
   useEffect(() => {
@@ -88,13 +92,13 @@ const MyLeads: React.FC = () => {
       fetchMyLeads();
       fetchAllStats();
     }
-  }, [currentPage, statusFilter, folderFilter, currentView, leadsPerPage, appliedSearchQuery]);
+  }, [currentPage, statusFilter, folderFilter, currentView, leadsPerPage, appliedSearchQuery, dateRange]);
 
   const fetchFolders = async () => {
     try {
       setLoading(true);
       
-      const response = await leadApi.getFolderCounts(); 
+      const response = await leadApi.getFolderCounts(getDateFilters()); 
       
       if (response.success && response.data) {
         // Use 'any' temporarily to break the conflict, 
@@ -120,7 +124,7 @@ const MyLeads: React.FC = () => {
 
   const fetchAllStats = async () => {
     try {
-      const response = await leadApi.getMyLeadsStats();
+      const response = await leadApi.getMyLeadsStats(getDateFilters());
       if (response.success && response.data) {
         setAllStats(response.data);
       }
@@ -139,7 +143,8 @@ const MyLeads: React.FC = () => {
         leadsPerPage, 
         statusFilter || undefined, 
         folderFilter || undefined, 
-        appliedSearchQuery || undefined
+        appliedSearchQuery || undefined,
+        getDateFilters()
       );
       
       if (response.success) {
@@ -308,6 +313,7 @@ const MyLeads: React.FC = () => {
                   setCurrentView('folders');
                   setSelectedFolder(null);
                   setFolderFilter('');
+                  setSelectedLeads([]);
                 }}
                 className="btn btn-outline btn-sm"
                 title="Back to folders"
@@ -347,6 +353,55 @@ const MyLeads: React.FC = () => {
    
 
 
+      </div>
+
+      <div className="card">
+        <div className="card-body">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-[1fr_1fr_auto_auto] md:items-end">
+            <div>
+              <label className="form-label">Created From</label>
+              <input
+                type="date"
+                value={dateRange.fromDate}
+                onChange={(event) => {
+                  setDateRange((current) => ({ ...current, fromDate: event.target.value }));
+                  setCurrentPage(1);
+                  setSelectedLeads([]);
+                }}
+                className="form-input"
+              />
+            </div>
+            <div>
+              <label className="form-label">Created To</label>
+              <input
+                type="date"
+                value={dateRange.toDate}
+                onChange={(event) => {
+                  setDateRange((current) => ({ ...current, toDate: event.target.value }));
+                  setCurrentPage(1);
+                  setSelectedLeads([]);
+                }}
+                className="form-input"
+              />
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setDateRange({ fromDate: '', toDate: '' });
+                setCurrentPage(1);
+                setSelectedLeads([]);
+              }}
+              className="btn btn-secondary"
+            >
+              Clear Dates
+            </button>
+            <div className="text-sm text-gray-500">
+              {dateRange.fromDate || dateRange.toDate
+                ? `Showing leads created ${dateRange.fromDate || 'from start'} to ${dateRange.toDate || 'today'}`
+                : 'Showing leads from all dates'}
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* Stats Cards */}
@@ -443,6 +498,7 @@ const MyLeads: React.FC = () => {
                 onClick={() => {
                   setSearchQuery('');
                   setAppliedSearchQuery('');
+                  setDateRange({ fromDate: '', toDate: '' });
                   setCurrentPage(1);
                   // Don't clear folder/status filter - it stays locked
                 }}

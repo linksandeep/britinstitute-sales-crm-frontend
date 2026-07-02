@@ -103,6 +103,15 @@ const handleError = (error: any): ApiResponse => {
     message: error.message || 'An unexpected error occurred',
   };
 };
+
+const appendLeadDateParams = (params: URLSearchParams, filters?: Partial<LeadFilters>) => {
+  if (!filters) return;
+  if (filters.date) params.append('date', filters.date);
+  if (filters.fromDate) params.append('fromDate', filters.fromDate);
+  if (filters.toDate) params.append('toDate', filters.toDate);
+  if (filters.dateField) params.append('dateField', filters.dateField);
+  if (filters.timezoneOffsetMinutes) params.append('timezoneOffsetMinutes', filters.timezoneOffsetMinutes);
+};
 // Authentication API
 export const authApi = {
   login: async (credentials: LoginCredentials): Promise<ApiResponse<{ user: User; token: string }>> => {
@@ -469,7 +478,14 @@ getAllChats: async (
     }
   },
 
-  getMyLeads: async (page?: number, limit?: number, status?: string, folder?: string, search?: string): Promise<PaginatedResponse<Lead>> => {
+  getMyLeads: async (
+    page?: number,
+    limit?: number,
+    status?: string,
+    folder?: string,
+    search?: string,
+    dateFilters?: Partial<LeadFilters>
+  ): Promise<PaginatedResponse<Lead>> => {
     try {
       const params = new URLSearchParams();
       if (page) params.append('page', page.toString());
@@ -477,6 +493,7 @@ getAllChats: async (
       if (status) params.append('status', status);
       if (folder) params.append('folder', folder);
       if (search) params.append('search', search);
+      appendLeadDateParams(params, dateFilters);
 
       const response = await api.get(`/leads/my-leads?${params.toString()}`);
       return response.data;
@@ -491,9 +508,14 @@ getAllChats: async (
   },
 
   // Get stats for all leads assigned to the current user (independent of filters or pagination)
-  getMyLeadsStats: async (): Promise<ApiResponse<{ total: number; newLeads: number; inProgress: number; closed: number }>> => {
+  getMyLeadsStats: async (
+    filters?: Partial<LeadFilters>
+  ): Promise<ApiResponse<{ total: number; newLeads: number; inProgress: number; closed: number }>> => {
     try {
-      const response = await api.get('/leads/my-leads/stats');
+      const params = new URLSearchParams();
+      appendLeadDateParams(params, filters);
+      const query = params.toString();
+      const response = await api.get(`/leads/my-leads/stats${query ? `?${query}` : ''}`);
       return response.data;
     } catch (error) {
       return {
@@ -514,17 +536,23 @@ getAllChats: async (
   },
 
   // Get folder counts for better performance
-  getFolderCounts: async (): Promise<ApiResponse<Record<string, number>>> => {
+  getFolderCounts: async (filters?: Partial<LeadFilters>): Promise<ApiResponse<Record<string, number>>> => {
     try {
-      const response = await api.get('/leads/folder-counts');
+      const params = new URLSearchParams();
+      appendLeadDateParams(params, filters);
+      const query = params.toString();
+      const response = await api.get(`/leads/folder-counts${query ? `?${query}` : ''}`);
       return handleResponse(response);
     } catch (error) {
       return handleError(error);
     }
   },
-  getFolderCountForAdmin: async (): Promise<ApiResponse<Record<string, number>>> => {
+  getFolderCountForAdmin: async (filters?: Partial<LeadFilters>): Promise<ApiResponse<Record<string, number>>> => {
     try {
-      const response = await api.get('/leads/folder-countsALL');
+      const params = new URLSearchParams();
+      appendLeadDateParams(params, filters);
+      const query = params.toString();
+      const response = await api.get(`/leads/folder-countsALL${query ? `?${query}` : ''}`);
       return handleResponse(response);
     } catch (error) {
       return handleError(error);
@@ -652,36 +680,56 @@ export const dashboardApi = {
     }
   },
 
-  getLeadsByStatus: async (): Promise<ApiResponse<Array<{ status: string; count: number; percentage: number }>>> => {
+  getLeadsByStatus: async (
+    filters?: Partial<LeadFilters>
+  ): Promise<ApiResponse<Array<{ status: string; count: number; percentage: number }>>> => {
     try {
-      const response = await api.get('/dashboard/leads/by-status');
+      const params = new URLSearchParams();
+      appendLeadDateParams(params, filters);
+      const query = params.toString();
+      const response = await api.get(`/dashboard/leads/by-status${query ? `?${query}` : ''}`);
       return handleResponse(response);
     } catch (error) {
       return handleError(error);
     }
   },
 
-  getLeadsBySource: async (): Promise<ApiResponse<Array<{ source: string; count: number; percentage: number }>>> => {
+  getLeadsBySource: async (
+    filters?: Partial<LeadFilters>
+  ): Promise<ApiResponse<Array<{ source: string; count: number; percentage: number }>>> => {
     try {
-      const response = await api.get('/dashboard/leads/by-source');
+      const params = new URLSearchParams();
+      appendLeadDateParams(params, filters);
+      const query = params.toString();
+      const response = await api.get(`/dashboard/leads/by-source${query ? `?${query}` : ''}`);
       return handleResponse(response);
     } catch (error) {
       return handleError(error);
     }
   },
 
-  getRecentActivity: async (): Promise<ApiResponse<Array<{ type: string; description: string; timestamp: string; user: string }>>> => {
+  getRecentActivity: async (
+    filters?: Partial<LeadFilters>
+  ): Promise<ApiResponse<Array<{ type: string; description: string; timestamp: string; user: string }>>> => {
     try {
-      const response = await api.get('/dashboard/recent-activity');
+      const params = new URLSearchParams();
+      appendLeadDateParams(params, filters);
+      const query = params.toString();
+      const response = await api.get(`/dashboard/recent-activity${query ? `?${query}` : ''}`);
       return handleResponse(response);
     } catch (error) {
       return handleError(error);
     }
   },
 
-  getLeadMetrics: async (): Promise<ApiResponse<{ conversionRate: number; leadWon: number; leadsThisWeek: number; leadsThisMonth: number }>> => {
+  getLeadMetrics: async (
+    period: '7d' | '30d' | '90d' | 'all' = '30d',
+    filters?: Partial<LeadFilters>
+  ): Promise<ApiResponse<{ conversionRate: number; leadWon: number; leadsThisWeek: number; leadsThisMonth: number }>> => {
     try {
-      const response = await api.get('/dashboard/metrics');
+      const params = new URLSearchParams({ period });
+      appendLeadDateParams(params, filters);
+      const response = await api.get(`/dashboard/metrics?${params.toString()}`);
       return handleResponse(response);
     } catch (error) {
       return handleError(error);
@@ -690,12 +738,13 @@ export const dashboardApi = {
 
   getPeriodStats: async (
     period: 'today' | 'week' | 'month' | 'custom',
-    range?: { from?: string; to?: string }
+    range?: { from?: string; to?: string; timezoneOffsetMinutes?: string }
   ): Promise<ApiResponse<PeriodLeadStats>> => {
     try {
       const params = new URLSearchParams({ period });
       if (range?.from) params.append('from', range.from);
       if (range?.to) params.append('to', range.to);
+      if (range?.timezoneOffsetMinutes) params.append('timezoneOffsetMinutes', range.timezoneOffsetMinutes);
       const response = await api.get(`/dashboard/period-stats?${params.toString()}`);
       return handleResponse(response);
     } catch (error) {

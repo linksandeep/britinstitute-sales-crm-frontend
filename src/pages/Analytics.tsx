@@ -1,7 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { dashboardApi } from '../lib/api';
-import type { DashboardStats } from '../types';
+import { dashboardApi, leadApi } from '../lib/api';
+import type { DashboardStats, Lead } from '../types';
+import {
+  getPresetDateRange,
+  isLeadInDateRange,
+  toLeadDateFilterParams,
+  type DateFilterState,
+  type PresetRange
+} from '../lib/dateFilters';
 import { 
   TrendingUp,
   Users,
@@ -35,7 +42,8 @@ const Analytics: React.FC = () => {
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [analyticsData, setAnalyticsData] = useState<AnalyticsData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [period, setPeriod] = useState<'7d' | '30d' | '90d' | 'all'>('30d');
+  const [period, setPeriod] = useState<'7d' | '30d' | '90d' | 'all' | 'custom'>('30d');
+  const [customRange, setCustomRange] = useState<DateFilterState>(getPresetDateRange('30d'));
 
   // Redirect if not admin
   if (user?.role !== 'admin') {
@@ -51,42 +59,109 @@ const Analytics: React.FC = () => {
 
   useEffect(() => {
     fetchAnalytics();
-  }, [period]);
+  }, [period, customRange]);
+
+  const activeRange = period === 'custom' ? customRange : getPresetDateRange(period as PresetRange);
+
+  const getPercentage = (count: number, total: number) => (total > 0 ? (count / total) * 100 : 0);
+
+  const buildBreakdown = <K extends 'status' | 'source'>(
+    leads: Lead[],
+    key: K,
+    label: K extends 'status' ? 'status' : 'source'
+  ) => {
+    const counts = leads.reduce<Record<string, number>>((acc, lead) => {
+      const value = lead[key] || 'Unknown';
+      acc[value] = (acc[value] || 0) + 1;
+      return acc;
+    }, {});
+    const total = leads.length;
+
+    return Object.entries(counts)
+      .map(([name, count]) => ({
+        [label]: name,
+        count,
+        percentage: getPercentage(count, total)
+      }))
+      .sort((a, b) => b.count - a.count) as K extends 'status'
+      ? Array<{ status: string; count: number; percentage: number }>
+      : Array<{ source: string; count: number; percentage: number }>;
+  };
 
   const fetchAnalytics = async () => {
     try {
       setLoading(true);
+      const dateFilters = toLeadDateFilterParams(activeRange, 'createdAt');
+      const activityDateFilters = toLeadDateFilterParams(activeRange, 'updatedAt');
       
-      const [statsResponse, statusResponse, sourceResponse, activityResponse, metricsResponse] = await Promise.all([
+      const [statsResponse, leadsResponse, activityResponse, metricsResponse] = await Promise.all([
         dashboardApi.getAdminStats(),
-        dashboardApi.getLeadsByStatus(),
-        dashboardApi.getLeadsBySource(),
-        dashboardApi.getRecentActivity(),
-        dashboardApi.getLeadMetrics()
+        leadApi.getLeads(dateFilters, 1, 10000),
+        dashboardApi.getRecentActivity(activityDateFilters),
+        dashboardApi.getLeadMetrics(period === 'custom' ? '30d' : period, dateFilters)
       ]);
       
-      if (statsResponse.success && statsResponse.data) {
-        setStats(statsResponse.data);
-      }
-      
-      setAnalyticsData({
-        leadsByStatus: statusResponse.success ? statusResponse.data! : [],
-        leadsBySource: sourceResponse.success ? sourceResponse.data! : [],
-        recentActivity: activityResponse.success ? activityResponse.data! : [],
-        metrics: metricsResponse.success ? metricsResponse.data! : {
-          conversionRate: 0,
-          averageResponseTime: 0,
-          leadsThisWeek: 0,
-          leadsThisMonth: 0
-        }
+      const filteredLeads = leadsResponse.success ? leadsResponse.data : [];
+      const totalLeads = leadsResponse.pagination?.total ?? filteredLeads.length;
+      const newLeads = filteredLeads.filter((lead) => lead.status === 'New').length;
+      const qualifiedLeads = filteredLeads.filter((lead) => lead.status === 'Qualified').length;
+      const salesDone = filteredLeads.filter((lead) => lead.status === 'Sales Done').length;
+      const dnpLeads = filteredLeads.filter((lead) => lead.status === 'DNP').length;
+      const contactedLeads = filteredLeads.filter((lead) => lead.status === 'Contacted').length;
+      const leadsByStatus = buildBreakdown(filteredLeads, 'status', 'status');
+      const leadsBySource = buildBreakdown(filteredLeads, 'source', 'source');
+      const thisWeekRange = getPresetDateRange('week');
+      const thisMonthRange = getPresetDateRange('month');
+      const leadsThisWeek = filteredLeads.filter((lead) => isLeadInDateRange(lead, thisWeekRange, 'createdAt')).length;
+      const leadsThisMonth = filteredLeads.filter((lead) => isLeadInDateRange(lead, thisMonthRange, 'createdAt')).length;
+
+      setStats({
+        totalLeads,
+        newLeads,
+        contactedLeads,
+        qualifiedLeads,
+        salesDone,
+        dnpLeads,
+        conversionRate: getPercentage(salesDone, totalLeads),
+        averageResponseTime: 0,
+        leadsThisMonth,
+        leadsGrowth: 0,
+        topPerformers: statsResponse.success && statsResponse.data ? statsResponse.data.topPerformers : [],
+        leadsBySource: leadsBySource.map((item) => ({
+          source: item.source as DashboardStats['leadsBySource'][number]['source'],
+          count: item.count,
+          percentage: item.percentage
+        })),
+        leadsByStatus: leadsByStatus.map((item) => ({
+          status: item.status,
+          count: item.count,
+          percentage: item.percentage
+        })),
+        leadsByFolder: statsResponse.success && statsResponse.data ? statsResponse.data.leadsByFolder : [],
+        lastUpdated: new Date().toISOString()
       });
       
-      // Debug logging for recent activity data
-      if (activityResponse.success && activityResponse.data) {
-        console.log('Recent Activity Data:', activityResponse.data);
-        console.log('Sample timestamp:', activityResponse.data[0]?.timestamp);
-      }
-      
+      setAnalyticsData({
+        leadsByStatus,
+        leadsBySource,
+        recentActivity: activityResponse.success ? activityResponse.data! : [],
+        metrics:
+          metricsResponse.success && metricsResponse.data
+            ? {
+                conversionRate: metricsResponse.data.conversionRate ?? getPercentage(salesDone, totalLeads),
+                averageResponseTime: 0,
+                leadsThisWeek: metricsResponse.data.leadsThisWeek ?? leadsThisWeek,
+                leadsThisMonth: metricsResponse.data.leadsThisMonth ?? leadsThisMonth,
+                leadWon: metricsResponse.data.leadWon ?? salesDone
+              }
+            : {
+                conversionRate: getPercentage(salesDone, totalLeads),
+                averageResponseTime: 0,
+                leadsThisWeek,
+                leadsThisMonth,
+                leadWon: salesDone
+              }
+      });
     } catch (error) {
       console.error('Failed to fetch analytics');
       toast.error('Failed to load analytics data');
@@ -196,14 +271,33 @@ const Analytics: React.FC = () => {
         <div className="flex items-center gap-3">
           <select
             value={period}
-            onChange={(e) => setPeriod(e.target.value as '7d' | '30d' | '90d' | 'all')}
+            onChange={(e) => setPeriod(e.target.value as '7d' | '30d' | '90d' | 'all' | 'custom')}
             className="form-input w-auto"
           >
             <option value="7d">Last 7 days</option>
             <option value="30d">Last 30 days</option>
             <option value="90d">Last 90 days</option>
             <option value="all">All time</option>
+            <option value="custom">Custom range</option>
           </select>
+          {period === 'custom' && (
+            <>
+              <input
+                type="date"
+                value={customRange.fromDate}
+                onChange={(event) => setCustomRange((current) => ({ ...current, fromDate: event.target.value }))}
+                className="form-input w-auto"
+                aria-label="Analytics start date"
+              />
+              <input
+                type="date"
+                value={customRange.toDate}
+                onChange={(event) => setCustomRange((current) => ({ ...current, toDate: event.target.value }))}
+                className="form-input w-auto"
+                aria-label="Analytics end date"
+              />
+            </>
+          )}
           <button
             onClick={fetchAnalytics}
             className="btn btn-secondary"
@@ -233,7 +327,7 @@ const Analytics: React.FC = () => {
                 <p className="text-sm font-medium text-gray-600">Total Leads</p>
                 <p className="text-2xl font-bold text-gray-900">{stats.totalLeads}</p>
                 <p className="text-xs text-green-600">
-                  +{stats.leadsThisMonth} this month
+                  Created in selected range
                 </p>
               </div>
             </div>
@@ -263,7 +357,7 @@ const Analytics: React.FC = () => {
                 <p className="text-sm font-medium text-gray-600">Qualified Leads</p>
                 <p className="text-2xl font-bold text-gray-900">{stats.qualifiedLeads}</p>
                 <p className="text-xs text-blue-600">
-                  {((stats.qualifiedLeads / stats.totalLeads) * 100).toFixed(1)}% of total
+                  {getPercentage(stats.qualifiedLeads, stats.totalLeads).toFixed(1)}% of selected range
                 </p>
               </div>
             </div>

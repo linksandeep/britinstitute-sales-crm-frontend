@@ -24,16 +24,17 @@ import {
   YAxis
 } from 'recharts';
 import { useAuth } from '../contexts/AuthContext';
-import { dashboardApi } from '../lib/api';
-import type { DashboardStats, PeriodLeadStats } from '../types';
+import { dashboardApi, leadApi } from '../lib/api';
+import type { DashboardStats, Lead, PeriodLeadStats } from '../types';
 import { buildCallCenterSnapshot, formatDuration } from '../lib/callCenterData';
+import {
+  getPresetDateRange,
+  getTimezoneOffsetParam,
+  toLeadDateFilterParams,
+  type DateFilterState
+} from '../lib/dateFilters';
 
 type DashboardRange = 'today' | 'week' | 'month' | 'custom';
-
-const getLocalDateInputValue = (date = new Date()) => {
-  const localDate = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
-  return localDate.toISOString().slice(0, 10);
-};
 
 const getRangeLabel = (range: DashboardRange) => {
   if (range === 'today') return 'Today';
@@ -51,6 +52,23 @@ const formatLeadTimestamp = (value: string) =>
     hour: 'numeric',
     minute: '2-digit'
   });
+
+const countStatus = (leads: Lead[], status: string) => leads.filter((lead) => lead.status === status).length;
+
+const buildBreakdown = (leads: Lead[], key: 'status' | 'source') => {
+  const counts = leads.reduce<Record<string, number>>((acc, lead) => {
+    const value = lead[key] || 'Unknown';
+    acc[value] = (acc[value] || 0) + 1;
+    return acc;
+  }, {});
+
+  return Object.entries(counts)
+    .map(([_id, count]) => ({ _id, count }))
+    .sort((a, b) => b.count - a.count);
+};
+
+const getDashboardRange = (range: DashboardRange, customRange: DateFilterState) =>
+  range === 'custom' ? customRange : getPresetDateRange(range);
 
 const DashboardSkeleton: React.FC = () => (
   <div className="page-stack">
@@ -80,10 +98,7 @@ const Dashboard: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [range, setRange] = useState<DashboardRange>('today');
-  const [customRange, setCustomRange] = useState({
-    from: getLocalDateInputValue(),
-    to: getLocalDateInputValue()
-  });
+  const [customRange, setCustomRange] = useState<DateFilterState>(getPresetDateRange('today'));
 
   const snapshot = useMemo(() => buildCallCenterSnapshot(stats), [stats]);
   const rangeLabel = getRangeLabel(range);
@@ -171,15 +186,61 @@ const Dashboard: React.FC = () => {
   const recentUpdates = periodStats?.recentUpdates ?? [];
   const performers = stats?.topPerformers ?? [];
 
+  const fetchFallbackPeriodStats = useCallback(async (): Promise<PeriodLeadStats> => {
+    const selectedRange = getDashboardRange(range, customRange);
+    const updatedFilters = toLeadDateFilterParams(selectedRange, 'updatedAt');
+    const createdFilters = toLeadDateFilterParams(selectedRange, 'createdAt');
+    const maxFallbackRecords = 10000;
+
+    const [updatedResponse, createdResponse] = await Promise.all([
+      user?.role === 'admin'
+        ? leadApi.getLeads(updatedFilters, 1, maxFallbackRecords)
+        : leadApi.getMyLeads(1, maxFallbackRecords, undefined, undefined, undefined, updatedFilters),
+      user?.role === 'admin'
+        ? leadApi.getLeads(createdFilters, 1, 1)
+        : leadApi.getMyLeads(1, 1, undefined, undefined, undefined, createdFilters)
+    ]);
+
+    const updatedLeads = updatedResponse.success ? updatedResponse.data : [];
+    const updatedTotal = updatedResponse.pagination?.total ?? updatedLeads.length;
+    const createdTotal = createdResponse.pagination?.total ?? 0;
+
+    return {
+      period: range,
+      from: selectedRange.fromDate,
+      to: selectedRange.toDate,
+      updatedLeads: updatedTotal,
+      createdLeads: createdTotal,
+      assignedLeads: updatedLeads.filter((lead) => lead.assignedTo || lead.assignedToUser).length,
+      unassignedLeads: updatedLeads.filter((lead) => !lead.assignedTo && !lead.assignedToUser).length,
+      newLeads: countStatus(updatedLeads, 'New'),
+      contactedLeads: countStatus(updatedLeads, 'Contacted'),
+      qualifiedLeads: countStatus(updatedLeads, 'Qualified'),
+      salesDone: countStatus(updatedLeads, 'Sales Done'),
+      dnpLeads: countStatus(updatedLeads, 'DNP'),
+      statusBreakdown: buildBreakdown(updatedLeads, 'status'),
+      sourceBreakdown: buildBreakdown(updatedLeads, 'source'),
+      recentUpdates: updatedLeads
+        .slice()
+        .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
+        .slice(0, 8),
+      lastUpdated: new Date().toISOString()
+    };
+  }, [customRange, range, user?.role]);
+
   const fetchStats = useCallback(async () => {
     setLoading(true);
     setError('');
 
     try {
-      const periodRange = range === 'custom' ? customRange : undefined;
+      const selectedRange = getDashboardRange(range, customRange);
       const [summaryResponse, periodResponse] = await Promise.all([
         user?.role === 'admin' ? dashboardApi.getAdminStats() : dashboardApi.getStats(),
-        dashboardApi.getPeriodStats(range, periodRange)
+        dashboardApi.getPeriodStats(range, {
+          from: selectedRange.fromDate,
+          to: selectedRange.toDate,
+          timezoneOffsetMinutes: getTimezoneOffsetParam()
+        })
       ]);
 
       if (summaryResponse.success && summaryResponse.data) {
@@ -191,14 +252,15 @@ const Dashboard: React.FC = () => {
       if (periodResponse.success && periodResponse.data) {
         setPeriodStats(periodResponse.data);
       } else {
-        setError(periodResponse.message || 'Failed to fetch period dashboard statistics');
+        const fallbackPeriodStats = await fetchFallbackPeriodStats();
+        setPeriodStats(fallbackPeriodStats);
       }
     } catch (fetchError) {
       setError(fetchError instanceof Error ? fetchError.message : 'Failed to fetch dashboard statistics');
     } finally {
       setLoading(false);
     }
-  }, [customRange, range, user?.role]);
+  }, [customRange, fetchFallbackPeriodStats, range, user?.role]);
 
   useEffect(() => {
     fetchStats();
@@ -259,15 +321,15 @@ const Dashboard: React.FC = () => {
             <>
               <input
                 type="date"
-                value={customRange.from}
-                onChange={(event) => setCustomRange((current) => ({ ...current, from: event.target.value }))}
+                value={customRange.fromDate}
+                onChange={(event) => setCustomRange((current) => ({ ...current, fromDate: event.target.value }))}
                 className="form-input w-auto"
                 aria-label="Custom range start date"
               />
               <input
                 type="date"
-                value={customRange.to}
-                onChange={(event) => setCustomRange((current) => ({ ...current, to: event.target.value }))}
+                value={customRange.toDate}
+                onChange={(event) => setCustomRange((current) => ({ ...current, toDate: event.target.value }))}
                 className="form-input w-auto"
                 aria-label="Custom range end date"
               />

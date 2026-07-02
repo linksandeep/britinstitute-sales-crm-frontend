@@ -354,6 +354,11 @@ export interface LeadFilters {
   priority?: LeadPriority[];
   assignedTo?: string[];
   folder?: string[];
+  date?: string;
+  fromDate?: string;
+  toDate?: string;
+  dateField?: 'createdAt' | 'updatedAt';
+  timezoneOffsetMinutes?: string;
   dateRange?: {
     from: string;
     to: string;

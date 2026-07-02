@@ -5,6 +5,7 @@ import { leadApi, userApi, statusApi } from '../lib/api';
 import type { Lead, LeadStatus, LeadSource, LeadPriority, LeadFilters, User } from '../types';
 import LeadWhatsAppButton from '../components/LeadWhatsAppButton';
 import QuickLeadSearch from '../components/QuickLeadSearch';
+import { toLeadDateFilterParams, type DateFilterState } from '../lib/dateFilters';
 import { 
   Search, 
   Filter,
@@ -48,6 +49,7 @@ const AllLeads: React.FC = () => {
   const [statusOptions, setStatusOptions] = useState<string[]>([]);
   const [bulkStatus, setBulkStatus] = useState<string>('');
   const [updatingStatus, setUpdatingStatus] = useState(false);
+  const [dateRange, setDateRange] = useState<DateFilterState>({ fromDate: '', toDate: '' });
 
   // Filter states
   const [filters, setFilters] = useState<LeadFilters>({
@@ -72,6 +74,7 @@ const AllLeads: React.FC = () => {
 
   const priorityOptions: LeadPriority[] = ['High', 'Medium', 'Low'];
   const assignedToOptions = users.map(user => ({ id: user._id, name: user.name, email: user.email }));
+  const getDateFilters = () => toLeadDateFilterParams(dateRange, 'createdAt');
 
   // Initialize state from URL parameters on component mount
   useEffect(() => {
@@ -124,7 +127,7 @@ const AllLeads: React.FC = () => {
     } else {
       fetchLeads();
     }
-  }, [currentPage, filters, currentView, leadsPerPage, appliedSearchQuery]);
+  }, [currentPage, filters, currentView, leadsPerPage, appliedSearchQuery, dateRange]);
 
   useEffect(() => {
     fetchUsers();
@@ -159,7 +162,7 @@ const AllLeads: React.FC = () => {
       setLoading(true);
       
       // 1. Call the single optimized API that returns both folder and status stats
-      const response = await leadApi.getFolderCountForAdmin(); 
+      const response = await leadApi.getFolderCountForAdmin(getDateFilters()); 
       
       if (response.success && response.data) {
         // Cast to any to handle the specific backend structure we built
@@ -195,7 +198,11 @@ const AllLeads: React.FC = () => {
   const fetchLeads = async () => {
     try {
       setLoading(true);
-      const searchFilters = appliedSearchQuery ? { ...filters, search: appliedSearchQuery } : filters;
+      const searchFilters = {
+        ...filters,
+        ...getDateFilters(),
+        ...(appliedSearchQuery ? { search: appliedSearchQuery } : {})
+      };
       const response = await leadApi.getLeads(searchFilters, currentPage, leadsPerPage);
       
       if (response.success) {
@@ -231,6 +238,7 @@ const AllLeads: React.FC = () => {
     const preservedFolder = selectedFolder ? filters.folder : [];
     const preservedStatus = (selectedFolder && statusOptions.includes(selectedFolder as LeadStatus)) ? [selectedFolder as LeadStatus] : [];
     setFilters({ status: preservedStatus, source: [], priority: [], assignedTo: [], folder: preservedFolder });
+    setDateRange({ fromDate: '', toDate: '' });
     setSearchQuery('');
     setAppliedSearchQuery('');
     setCurrentPage(1);
@@ -255,6 +263,7 @@ const AllLeads: React.FC = () => {
     setSelectedFolder(null);
     setFilters({ status: [], source: [], priority: [], assignedTo: [], folder: [] });
     setSearchQuery('');
+    setDateRange({ fromDate: '', toDate: '' });
     setCurrentPage(1);
     setSelectedLeads([]);
   };
@@ -472,6 +481,55 @@ const AllLeads: React.FC = () => {
             <Plus className="w-4 h-4" />
             Add Lead
           </a>
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="card-body">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-[1fr_1fr_auto_auto] md:items-end">
+            <div>
+              <label className="form-label">Created From</label>
+              <input
+                type="date"
+                value={dateRange.fromDate}
+                onChange={(event) => {
+                  setDateRange((current) => ({ ...current, fromDate: event.target.value }));
+                  setCurrentPage(1);
+                  setSelectedLeads([]);
+                }}
+                className="form-input"
+              />
+            </div>
+            <div>
+              <label className="form-label">Created To</label>
+              <input
+                type="date"
+                value={dateRange.toDate}
+                onChange={(event) => {
+                  setDateRange((current) => ({ ...current, toDate: event.target.value }));
+                  setCurrentPage(1);
+                  setSelectedLeads([]);
+                }}
+                className="form-input"
+              />
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setDateRange({ fromDate: '', toDate: '' });
+                setCurrentPage(1);
+                setSelectedLeads([]);
+              }}
+              className="btn btn-secondary"
+            >
+              Clear Dates
+            </button>
+            <div className="text-sm text-gray-500">
+              {dateRange.fromDate || dateRange.toDate
+                ? `Showing leads created ${dateRange.fromDate || 'from start'} to ${dateRange.toDate || 'today'}`
+                : 'Showing leads from all dates'}
+            </div>
+          </div>
         </div>
       </div>
 

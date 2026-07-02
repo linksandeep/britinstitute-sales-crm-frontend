@@ -4,6 +4,7 @@ import { leadApi, userApi, statusApi } from '../lib/api';
 import type { Lead, User, LeadStatus, LeadSource } from '../types';
 import InfiniteScrollUserDropdown from '../components/InfiniteScrollUserDropdown_Portal';
 import LeadWhatsAppButton from '../components/LeadWhatsAppButton';
+import { toLeadDateFilterParams, type DateFilterState } from '../lib/dateFilters';
 import {
   UserPlus,
   Search,
@@ -30,12 +31,8 @@ const AssignLeads: React.FC = () => {
   const [assigning, setAssigning] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [appliedSearchQuery, setAppliedSearchQuery] = useState('');
-  // Date filter state
-const [fromDate, setFromDate] = useState('');
-const [toDate, setToDate] = useState('');
-
-const [appliedFromDate, setAppliedFromDate] = useState('');
-const [appliedToDate, setAppliedToDate] = useState('');
+  const [dateRange, setDateRange] = useState<DateFilterState>({ fromDate: '', toDate: '' });
+  const [appliedDateRange, setAppliedDateRange] = useState<DateFilterState>({ fromDate: '', toDate: '' });
 
   const [statusFilter, setStatusFilter] = useState<LeadStatus | ''>('');
   const [sourceFilter, setSourceFilter] = useState<LeadSource | ''>('');
@@ -55,6 +52,7 @@ const [appliedToDate, setAppliedToDate] = useState('');
   const [statusOptions, setStatusOptions] = useState<string[]>([]);
   const [bulkStatus, setBulkStatus] = useState<string>('');
   const [updatingStatus, setUpdatingStatus] = useState(false);
+  const getDateFilters = (range = appliedDateRange) => toLeadDateFilterParams(range, 'createdAt');
 
   // Redirect if not admin
   if (user?.role !== 'admin') {
@@ -94,8 +92,7 @@ const [appliedToDate, setAppliedToDate] = useState('');
     sourceFilter,
     folderFilter,
     appliedSearchQuery,
-    appliedFromDate,
-    appliedToDate
+    appliedDateRange
   ]);
   
   
@@ -108,7 +105,7 @@ const [appliedToDate, setAppliedToDate] = useState('');
       setLoading(true);
       
       // 1. Call the single optimized API that returns both folder and status stats
-      const response = await leadApi.getFolderCountForAdmin(); 
+      const response = await leadApi.getFolderCountForAdmin(getDateFilters(dateRange)); 
       
       if (response.success && response.data) {
         // Cast to any to handle the specific backend structure we built
@@ -159,18 +156,7 @@ const [appliedToDate, setAppliedToDate] = useState('');
         filters.assignedTo = [userFilter];
       }
   
-   //   ✅ DATE FILTER LOGIC
-      if (
-        appliedFromDate &&
-        appliedToDate &&
-        appliedFromDate === appliedToDate
-      ) {
-        // single day
-        filters.date = appliedFromDate;
-      } else {
-        if (appliedFromDate) filters.fromDate = appliedFromDate;
-        if (appliedToDate) filters.toDate = appliedToDate;
-      }
+      Object.assign(filters, getDateFilters());
   
       const response = await leadApi.getLeads(
         filters,
@@ -286,6 +272,8 @@ const [appliedToDate, setAppliedToDate] = useState('');
     setSearchQuery('');
     setStatusFilter('');
     setSourceFilter('');
+    setDateRange({ fromDate: '', toDate: '' });
+    setAppliedDateRange({ fromDate: '', toDate: '' });
     setCurrentPage(1);
     setSelectedLeads([]);
   };
@@ -638,13 +626,9 @@ const [appliedToDate, setAppliedToDate] = useState('');
           <div className="card-body">
             <form onSubmit={(e) => {
               e.preventDefault();
-            setAppliedSearchQuery(searchQuery);
-
-// apply date filters
-setAppliedFromDate(fromDate);
-setAppliedToDate(toDate);
-
-setCurrentPage(1);
+              setAppliedSearchQuery(searchQuery);
+              setAppliedDateRange(dateRange);
+              setCurrentPage(1);
             }} className="grid grid-cols-1 md:grid-cols-9 gap-4">
               <div className="md:col-span-2">
                 <div className="relative">
@@ -663,8 +647,8 @@ setCurrentPage(1);
   <input
     type="date"
     className="form-input w-full"
-    value={fromDate}
-    onChange={(e) => setFromDate(e.target.value)}
+    value={dateRange.fromDate}
+    onChange={(e) => setDateRange((current) => ({ ...current, fromDate: e.target.value }))}
   />
 </div>
 
@@ -673,8 +657,8 @@ setCurrentPage(1);
   <input
     type="date"
     className="form-input w-full"
-    value={toDate}
-    onChange={(e) => setToDate(e.target.value)}
+    value={dateRange.toDate}
+    onChange={(e) => setDateRange((current) => ({ ...current, toDate: e.target.value }))}
   />
 </div>
 
@@ -752,6 +736,25 @@ setCurrentPage(1);
   )}
 </button>
 
+              </div>
+              <div>
+                <button
+                  type="button"
+                  className="btn btn-secondary w-full"
+                  onClick={() => {
+                    setSearchQuery('');
+                    setAppliedSearchQuery('');
+                    setDateRange({ fromDate: '', toDate: '' });
+                    setAppliedDateRange({ fromDate: '', toDate: '' });
+                    setStatusFilter('');
+                    setSourceFilter('');
+                    setUserFilter('unassigned');
+                    setCurrentPage(1);
+                    setSelectedLeads([]);
+                  }}
+                >
+                  Clear
+                </button>
               </div>
             </form>
           </div>
