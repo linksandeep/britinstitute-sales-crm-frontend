@@ -12,6 +12,7 @@ export interface User {
   _id: string;
   name: string;
   email: string;
+  phone?: string;
   role: 'admin' | 'user';
   isActive: boolean;
   lastLogin?: string;
@@ -30,6 +31,7 @@ export interface CreateUserForm {
   email: string;
   password: string;
   role: 'admin' | 'user';
+  phone?: string;
   canWorkFromHome: boolean
 }
 
@@ -307,6 +309,51 @@ export interface ZoomPhoneLeadRecordingsResponse {
   page_size?: number;
   page_count?: number;
   matched_numbers?: string[];
+}
+
+export interface ZoomMeetingsStatus {
+  configured: boolean;
+  missing: string[];
+  provider: string;
+  mode: string;
+  defaultHostUserId: string;
+  timezone: string;
+}
+
+export interface ZoomMeeting {
+  _id: string;
+  topic: string;
+  agenda?: string;
+  startTime: string;
+  duration: number;
+  timezone: string;
+  lead?: Pick<Lead, '_id' | 'name' | 'email' | 'phone' | 'status'>;
+  createdBy?: Pick<User, '_id' | 'name' | 'email' | 'phone'>;
+  hostUser?: Pick<User, '_id' | 'name' | 'email' | 'phone'>;
+  zoomMeetingId: string;
+  zoomUuid?: string;
+  joinUrl: string;
+  startUrl?: string;
+  password?: string;
+  status: 'scheduled' | 'synced' | 'cancelled';
+  rawZoomResponse?: Record<string, unknown>;
+  lastSyncedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateZoomMeetingForm {
+  topic: string;
+  agenda?: string;
+  startTime: string;
+  duration: number;
+  timezone?: string;
+  leadId?: string;
+  hostUserId?: string;
+  hostZoomUserId?: string;
+  joinBeforeHost?: boolean;
+  waitingRoom?: boolean;
+  autoRecording?: 'none' | 'local' | 'cloud';
 }
 
 // Excel Import Types

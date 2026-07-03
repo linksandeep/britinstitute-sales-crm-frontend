@@ -13,6 +13,7 @@ import {
   UserCheck,
   Calendar,
   Mail,
+  Phone,
   AlertTriangle,
   X
 } from 'lucide-react';
@@ -43,6 +44,7 @@ const UserManagement: React.FC = () => {
 const [formData, setFormData] = useState({
   name: '',
   email: '',
+  phone: '',
   password: '',
   role: 'user' as 'admin' | 'user',
   isActive: true,
@@ -95,18 +97,20 @@ const [formData, setFormData] = useState({
     
     const matchesSearch = user.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
                          user.email.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesPhone = user.phone?.toLowerCase().includes(searchQuery.toLowerCase()) || false;
     const matchesRole = roleFilter === 'all' || user.role === roleFilter;
     const matchesStatus = statusFilter === 'all' || 
                          (statusFilter === 'active' && user.isActive) ||
                          (statusFilter === 'inactive' && !user.isActive);
     
-    return matchesSearch && matchesRole && matchesStatus;
+    return (matchesSearch || matchesPhone) && matchesRole && matchesStatus;
   });
 
   const resetForm = () => {
     setFormData({
       name: '',
       email: '',
+      phone: '',
       password: '',
       role: 'user',
       isActive: true,
@@ -124,6 +128,7 @@ const [formData, setFormData] = useState({
     setFormData({
       name: user.name,
       email: user.email,
+      phone: user.phone || '',
       password: '',
       role: user.role,
       isActive: user.isActive,
@@ -147,6 +152,7 @@ const [formData, setFormData] = useState({
         // Update user
         const updateData: any = {
           name: formData.name,
+          phone: formData.phone,
           role: formData.role,
           isActive: formData.isActive,
           canWorkFromHome: formData.canWorkFromHome
@@ -165,6 +171,7 @@ const [formData, setFormData] = useState({
         const response = await userApi.createUser({
           name: formData.name,
           email: formData.email,
+          phone: formData.phone,
           password: formData.password,
           role: formData.role,
           canWorkFromHome: formData.canWorkFromHome
@@ -371,6 +378,10 @@ const [formData, setFormData] = useState({
                           <Mail className="w-3 h-3 mr-1" />
                           {user.email}
                         </div>
+                        <div className="flex items-center text-sm text-gray-500">
+                          <Phone className="w-3 h-3 mr-1" />
+                          {user.phone || 'No phone number'}
+                        </div>
                       </div>
                     </div>
                   </td>
@@ -499,6 +510,16 @@ const [formData, setFormData] = useState({
                   className="form-input"
                   value={formData.email}
                   onChange={(e) => setFormData(prev => ({ ...prev, email: e.target.value }))}
+                />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Phone Number</label>
+                <input
+                  type="tel"
+                  className="form-input"
+                  value={formData.phone}
+                  onChange={(e) => setFormData(prev => ({ ...prev, phone: e.target.value }))}
+                  placeholder="+44 7447 177947"
                 />
               </div>
               <div className="flex items-center gap-2 mb-4">

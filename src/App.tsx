@@ -8,6 +8,7 @@ import RestrictedPopup from './components/RestrictedAccess';
 
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Calls = lazy(() => import('./pages/Calls'));
+const ZoomMeetings = lazy(() => import('./pages/ZoomMeetings'));
 const AllLeads = lazy(() => import('./pages/AllLeads'));
 const MyLeads = lazy(() => import('./pages/MyLeads'));
 const AddLead = lazy(() => import('./pages/AddLead'));
@@ -91,6 +92,14 @@ const AppRoutes: React.FC = () => (
         element={
           <ProtectedPage>
             <Calls />
+          </ProtectedPage>
+        }
+      />
+      <Route
+        path="/zoom-meetings"
+        element={
+          <ProtectedPage>
+            <ZoomMeetings />
           </ProtectedPage>
         }
       />

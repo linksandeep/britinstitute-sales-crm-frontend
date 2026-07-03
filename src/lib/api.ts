@@ -22,6 +22,9 @@ import type {
   ZoomPhoneLeadCallsResponse,
   ZoomPhoneLeadRecordingsResponse,
   ZoomPhoneStatus,
+  ZoomMeeting,
+  ZoomMeetingsStatus,
+  CreateZoomMeetingForm,
 
 } from '../types';
 // Create axios instance with base configuration
@@ -1117,6 +1120,57 @@ export const zoomPhoneApi = {
       { responseType: 'blob' }
     );
     return response.data;
+  }
+};
+
+export const zoomMeetingsApi = {
+  getStatus: async (): Promise<ApiResponse<ZoomMeetingsStatus>> => {
+    try {
+      const response = await api.get('/zoom-meetings/status');
+      return handleResponse(response);
+    } catch (error) {
+      return handleError(error);
+    }
+  },
+
+  getMeetings: async (filters?: { search?: string; status?: string }): Promise<ApiResponse<ZoomMeeting[]>> => {
+    try {
+      const params = new URLSearchParams();
+      if (filters?.search) params.append('search', filters.search);
+      if (filters?.status) params.append('status', filters.status);
+      const query = params.toString();
+      const response = await api.get(`/zoom-meetings${query ? `?${query}` : ''}`);
+      return handleResponse(response);
+    } catch (error) {
+      return handleError(error);
+    }
+  },
+
+  createMeeting: async (meetingData: CreateZoomMeetingForm): Promise<ApiResponse<ZoomMeeting>> => {
+    try {
+      const response = await api.post('/zoom-meetings', meetingData);
+      return handleResponse(response);
+    } catch (error) {
+      return handleError(error);
+    }
+  },
+
+  getMeeting: async (meetingId: string): Promise<ApiResponse<ZoomMeeting>> => {
+    try {
+      const response = await api.get(`/zoom-meetings/${meetingId}`);
+      return handleResponse(response);
+    } catch (error) {
+      return handleError(error);
+    }
+  },
+
+  cancelMeeting: async (meetingId: string): Promise<ApiResponse<ZoomMeeting>> => {
+    try {
+      const response = await api.delete(`/zoom-meetings/${meetingId}`);
+      return handleResponse(response);
+    } catch (error) {
+      return handleError(error);
+    }
   }
 };
 

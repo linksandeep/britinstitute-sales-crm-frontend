@@ -16,6 +16,7 @@ import {
   Upload,
   UserCheck,
   UserPlus,
+  Video,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import Logo from './Logo';
@@ -54,6 +55,7 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
       label: 'Call Center',
       items: [
         { name: 'Phone Calling', href: '/calls', icon: Headphones, badge: 'Live' },
+        { name: 'Zoom Meetings', href: '/zoom-meetings', icon: Video, badge: 'Live' },
         { name: 'Call History', href: '/calls?view=history', icon: PhoneCall },
         { name: 'Reports', href: '/analytics', icon: SlidersHorizontal, adminOnly: true }
       ]
