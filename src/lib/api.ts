@@ -19,6 +19,9 @@ import type {
   DynamicImportRequest,
   LeadFieldDefinition,
   GoogleSheetImportResponse,
+  ZoomPhoneLeadCallsResponse,
+  ZoomPhoneLeadRecordingsResponse,
+  ZoomPhoneStatus,
 
 } from '../types';
 // Create axios instance with base configuration
@@ -1011,6 +1014,110 @@ export const performance ={
       return handleError(error);
     }
   },
+};
+
+interface ZoomPhoneQuery {
+  from?: string;
+  to?: string;
+  type?: string;
+  nextPageToken?: string;
+  pageSize?: number;
+}
+
+const appendZoomPhoneQuery = (params: URLSearchParams, query?: ZoomPhoneQuery) => {
+  if (!query) return;
+  if (query.from) params.append('from', query.from);
+  if (query.to) params.append('to', query.to);
+  if (query.type) params.append('type', query.type);
+  if (query.nextPageToken) params.append('nextPageToken', query.nextPageToken);
+  if (query.pageSize) params.append('pageSize', query.pageSize.toString());
+};
+
+export const zoomPhoneApi = {
+  getStatus: async (): Promise<ApiResponse<ZoomPhoneStatus>> => {
+    try {
+      const response = await api.get('/zoom-phone/status');
+      return handleResponse(response);
+    } catch (error) {
+      return handleError(error);
+    }
+  },
+
+  getAccountCallLogs: async (query?: ZoomPhoneQuery): Promise<ApiResponse<ZoomPhoneLeadCallsResponse>> => {
+    try {
+      const params = new URLSearchParams();
+      appendZoomPhoneQuery(params, query);
+      const queryString = params.toString();
+      const response = await api.get(`/zoom-phone/account/call-logs${queryString ? `?${queryString}` : ''}`);
+      return handleResponse(response);
+    } catch (error) {
+      return handleError(error);
+    }
+  },
+
+  getLeadCalls: async (leadId: string, query?: ZoomPhoneQuery): Promise<ApiResponse<ZoomPhoneLeadCallsResponse>> => {
+    try {
+      const params = new URLSearchParams();
+      appendZoomPhoneQuery(params, query);
+      const queryString = params.toString();
+      const response = await api.get(`/zoom-phone/leads/${leadId}/calls${queryString ? `?${queryString}` : ''}`);
+      return handleResponse(response);
+    } catch (error) {
+      return handleError(error);
+    }
+  },
+
+  getLeadRecordings: async (
+    leadId: string,
+    query?: ZoomPhoneQuery
+  ): Promise<ApiResponse<ZoomPhoneLeadRecordingsResponse>> => {
+    try {
+      const params = new URLSearchParams();
+      appendZoomPhoneQuery(params, query);
+      const queryString = params.toString();
+      const response = await api.get(`/zoom-phone/leads/${leadId}/recordings${queryString ? `?${queryString}` : ''}`);
+      return handleResponse(response);
+    } catch (error) {
+      return handleError(error);
+    }
+  },
+
+  getCallLogRecordings: async (
+    leadId: string,
+    callLogId: string
+  ): Promise<ApiResponse<ZoomPhoneLeadRecordingsResponse>> => {
+    try {
+      const response = await api.get(
+        `/zoom-phone/leads/${leadId}/call-logs/${encodeURIComponent(callLogId)}/recordings`
+      );
+      return handleResponse(response);
+    } catch (error) {
+      return handleError(error);
+    }
+  },
+
+  downloadLeadRecordingAudio: async (
+    leadId: string,
+    recordingId: string,
+    options?: {
+      downloadUrl?: string;
+      callLogId?: string;
+      from?: string;
+      to?: string;
+    }
+  ): Promise<Blob> => {
+    const params = new URLSearchParams();
+    if (options?.downloadUrl) params.append('downloadUrl', options.downloadUrl);
+    if (options?.callLogId) params.append('callLogId', options.callLogId);
+    if (options?.from) params.append('from', options.from);
+    if (options?.to) params.append('to', options.to);
+    const queryString = params.toString();
+    const response = await api.get(
+      `/zoom-phone/leads/${leadId}/recordings/${encodeURIComponent(recordingId)}/audio${queryString ? `?${queryString}` : ''}`,
+      { responseType: 'blob' }
+    );
+    return response.data;
+  }
 };
 
 

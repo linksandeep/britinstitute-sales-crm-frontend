@@ -12,6 +12,7 @@ import {
   Globe,
   AlertTriangle,
   MessageSquare,
+  Headphones,
   FolderOpen,
   Plus,
   Check,
@@ -26,6 +27,8 @@ const AddLead: React.FC = () => {
     name: '',
     email: '',
     phone: '',
+    whatsapp: '',
+    zoomPhoneNumber: '',
     position: '',
     folder: '',
     source: 'Manual',
@@ -282,6 +285,42 @@ const AddLead: React.FC = () => {
                 {errors.phone && (
                   <p className="form-error">{errors.phone}</p>
                 )}
+              </div>
+
+              <div className="form-group">
+                <label htmlFor="whatsapp" className="form-label">
+                  WhatsApp Number
+                </label>
+                <div className="relative">
+                  <MessageSquare className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
+                  <input
+                    type="tel"
+                    id="whatsapp"
+                    name="whatsapp"
+                    value={formData.whatsapp}
+                    onChange={handleInputChange}
+                    className="form-input pl-10"
+                    placeholder="Optional WhatsApp number"
+                  />
+                </div>
+              </div>
+
+              <div className="form-group">
+                <label htmlFor="zoomPhoneNumber" className="form-label">
+                  Zoom Phone Number
+                </label>
+                <div className="relative">
+                  <Headphones className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
+                  <input
+                    type="tel"
+                    id="zoomPhoneNumber"
+                    name="zoomPhoneNumber"
+                    value={formData.zoomPhoneNumber}
+                    onChange={handleInputChange}
+                    className="form-input pl-10"
+                    placeholder="Number shown in Zoom Phone call logs"
+                  />
+                </div>
               </div>
 
               <div className="form-group">

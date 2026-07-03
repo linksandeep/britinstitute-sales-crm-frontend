@@ -1,20 +1,33 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { leadApi, userApi } from '../lib/api';
-import type { Lead, LeadPriority, LeadSource, LeadStatus, User as AppUser } from '../types';
+import { leadApi, userApi, zoomPhoneApi } from '../lib/api';
+import type {
+  Lead,
+  LeadPriority,
+  LeadSource,
+  LeadStatus,
+  User as AppUser,
+  ZoomPhoneCallLog,
+  ZoomPhoneRecording,
+  ZoomPhoneStatus
+} from '../types';
 import LeadWhatsAppButton from '../components/LeadWhatsAppButton';
 import {
   AlertCircle,
   ArrowLeft,
   Calendar,
   Clock,
+  Download,
   Edit,
   FileText,
+  Headphones,
   Mail,
   MessageSquare,
   Phone,
+  PlayCircle,
   Plus,
+  RefreshCw,
   Save,
   UserPlus,
   X
@@ -89,6 +102,35 @@ const priorityTone = (priority: LeadPriority) => {
   return 'text-green-700 bg-green-50 border-green-200';
 };
 
+const formatCallDate = (value?: string) => {
+  if (!value) return 'Not available';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString();
+};
+
+const formatDuration = (seconds?: number) => {
+  if (!seconds || seconds <= 0) return '0:00';
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = Math.floor(seconds % 60);
+  return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
+};
+
+const callLogId = (call: ZoomPhoneCallLog) => call.id || call.call_id || '';
+
+const recordingId = (recording: ZoomPhoneRecording) => recording.id || recording.call_id || recording.call_log_id || '';
+
+const defaultCallDateRange = () => {
+  const to = new Date();
+  const from = new Date(to);
+  from.setDate(from.getDate() - 30);
+
+  return {
+    from: from.toISOString().slice(0, 10),
+    to: to.toISOString().slice(0, 10)
+  };
+};
+
 const LeadDetails: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -109,12 +151,24 @@ const LeadDetails: React.FC = () => {
   const [reminderTitle, setReminderTitle] = useState('');
   const [reminderNote, setReminderNote] = useState('');
   const [remindAt, setRemindAt] = useState('');
+  const [callDateRange, setCallDateRange] = useState(defaultCallDateRange);
+  const [zoomStatus, setZoomStatus] = useState<ZoomPhoneStatus | null>(null);
+  const [zoomCalls, setZoomCalls] = useState<ZoomPhoneCallLog[]>([]);
+  const [zoomRecordings, setZoomRecordings] = useState<ZoomPhoneRecording[]>([]);
+  const [zoomLoading, setZoomLoading] = useState(false);
+  const [zoomError, setZoomError] = useState('');
+  const [callRecordings, setCallRecordings] = useState<Record<string, ZoomPhoneRecording[]>>({});
+  const [recordingsLoading, setRecordingsLoading] = useState<Record<string, boolean>>({});
+  const [audioUrl, setAudioUrl] = useState('');
+  const [activeRecordingId, setActiveRecordingId] = useState('');
+  const [audioLoadingId, setAudioLoadingId] = useState('');
 
   const [formData, setFormData] = useState({
     name: '',
     email: '',
     phone: '',
     whatsapp: '',
+    zoomPhoneNumber: '',
     position: '',
     folder: '',
     status: 'New' as LeadStatus,
@@ -133,6 +187,7 @@ const LeadDetails: React.FC = () => {
       email: nextLead.email || '',
       phone: nextLead.phone || '',
       whatsapp: nextLead.whatsapp || '',
+      zoomPhoneNumber: nextLead.zoomPhoneNumber || '',
       position: nextLead.position || '',
       folder: nextLead.folder || '',
       status: nextLead.status || 'New',
@@ -181,6 +236,174 @@ const LeadDetails: React.FC = () => {
       ),
     [lead?.notes]
   );
+
+  const leadPhoneNumbers = useMemo(
+    () => [lead?.phone, lead?.whatsapp, lead?.zoomPhoneNumber].filter(Boolean) as string[],
+    [lead?.phone, lead?.whatsapp, lead?.zoomPhoneNumber]
+  );
+
+  const fetchZoomPhoneData = useCallback(async () => {
+    if (!lead?._id) return;
+
+    setZoomLoading(true);
+    setZoomError('');
+
+    const statusResponse = await zoomPhoneApi.getStatus();
+
+    if (!statusResponse.success || !statusResponse.data) {
+      setZoomError(statusResponse.message || 'Unable to check Zoom Phone configuration');
+      setZoomLoading(false);
+      return;
+    }
+
+    setZoomStatus(statusResponse.data);
+
+    if (!statusResponse.data.configured) {
+      setZoomCalls([]);
+      setZoomRecordings([]);
+      setZoomError('Zoom Phone API credentials are not configured on the backend yet.');
+      setZoomLoading(false);
+      return;
+    }
+
+    const query = {
+      from: callDateRange.from,
+      to: callDateRange.to,
+      pageSize: 300
+    };
+
+    const [callsResponse, recordingsResponse] = await Promise.all([
+      zoomPhoneApi.getLeadCalls(lead._id, query),
+      zoomPhoneApi.getLeadRecordings(lead._id, query)
+    ]);
+
+    if (callsResponse.success && callsResponse.data) {
+      setZoomCalls(callsResponse.data.call_logs || []);
+    } else {
+      setZoomCalls([]);
+      setZoomError(callsResponse.message || 'Unable to sync Zoom Phone call history');
+    }
+
+    if (recordingsResponse.success && recordingsResponse.data) {
+      setZoomRecordings(recordingsResponse.data.recordings || []);
+    } else {
+      setZoomRecordings([]);
+      setZoomError((current) => current || recordingsResponse.message || 'Unable to sync Zoom Phone recordings');
+    }
+
+    setZoomLoading(false);
+  }, [callDateRange.from, callDateRange.to, lead?._id]);
+
+  useEffect(() => {
+    if (activeTab === 'calls') {
+      fetchZoomPhoneData();
+    }
+  }, [activeTab, fetchZoomPhoneData]);
+
+  useEffect(() => {
+    return () => {
+      if (audioUrl) {
+        URL.revokeObjectURL(audioUrl);
+      }
+    };
+  }, [audioUrl]);
+
+  const loadCallRecordings = async (call: ZoomPhoneCallLog) => {
+    if (!lead) return;
+    const idForCall = callLogId(call);
+
+    if (!idForCall) {
+      toast.error('This Zoom call log does not include a recording lookup ID');
+      return;
+    }
+
+    setRecordingsLoading((current) => ({ ...current, [idForCall]: true }));
+    const response = await zoomPhoneApi.getCallLogRecordings(lead._id, idForCall);
+
+    if (response.success && response.data) {
+      setCallRecordings((current) => ({
+        ...current,
+        [idForCall]: response.data?.recordings || []
+      }));
+    } else {
+      toast.error(response.message || 'Failed to load recordings for this call');
+    }
+
+    setRecordingsLoading((current) => ({ ...current, [idForCall]: false }));
+  };
+
+  const getRecordingAudioOptions = (recording: ZoomPhoneRecording) => {
+    const options: { downloadUrl?: string; callLogId?: string; from?: string; to?: string } = {
+      from: callDateRange.from,
+      to: callDateRange.to
+    };
+    const downloadUrl = recording.download_url || recording.file_url;
+
+    if (downloadUrl) options.downloadUrl = downloadUrl;
+    if (recording.call_log_id) options.callLogId = recording.call_log_id;
+
+    return options;
+  };
+
+  const playRecording = async (recording: ZoomPhoneRecording) => {
+    if (!lead) return;
+    const idForRecording = recordingId(recording);
+
+    if (!idForRecording) {
+      toast.error('This Zoom recording is missing a playback ID');
+      return;
+    }
+
+    setAudioLoadingId(idForRecording);
+
+    try {
+      const blob = await zoomPhoneApi.downloadLeadRecordingAudio(
+        lead._id,
+        idForRecording,
+        getRecordingAudioOptions(recording)
+      );
+      const nextAudioUrl = URL.createObjectURL(blob);
+      setAudioUrl((current) => {
+        if (current) URL.revokeObjectURL(current);
+        return nextAudioUrl;
+      });
+      setActiveRecordingId(idForRecording);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to play Zoom recording');
+    } finally {
+      setAudioLoadingId('');
+    }
+  };
+
+  const downloadRecording = async (recording: ZoomPhoneRecording) => {
+    if (!lead) return;
+    const idForRecording = recordingId(recording);
+
+    if (!idForRecording) {
+      toast.error('This Zoom recording is missing a download ID');
+      return;
+    }
+
+    setAudioLoadingId(idForRecording);
+
+    try {
+      const blob = await zoomPhoneApi.downloadLeadRecordingAudio(
+        lead._id,
+        idForRecording,
+        getRecordingAudioOptions(recording)
+      );
+      const downloadUrl = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = downloadUrl;
+      link.download = `${lead.name.replace(/\s+/g, '-').toLowerCase()}-${idForRecording}.mp3`;
+      link.click();
+      URL.revokeObjectURL(downloadUrl);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to download Zoom recording');
+    } finally {
+      setAudioLoadingId('');
+    }
+  };
 
   const handleGoBack = () => {
     const state = location.state as ReturnState | null;
@@ -405,6 +628,10 @@ const LeadDetails: React.FC = () => {
               <span>{lead.whatsapp || lead.phone || 'Not available'}</span>
             </div>
             <div className="lead-field">
+              <span>Zoom Phone</span>
+              <span>{lead.zoomPhoneNumber || lead.phone || 'Not linked'}</span>
+            </div>
+            <div className="lead-field">
               <span>Folder</span>
               <span>{lead.folder || 'Uncategorized'}</span>
             </div>
@@ -505,14 +732,260 @@ const LeadDetails: React.FC = () => {
             )}
 
             {activeTab === 'calls' && (
-              <div className="lead-empty-state">
-                <Phone className="h-10 w-10" />
-                <h3>No synced call records yet</h3>
-                <p>Real call logs and recordings will appear here after the phone service call-history API is connected.</p>
-                <a href={`tel:${lead.phone}`} className="btn btn-primary">
-                  <Phone className="h-4 w-4" />
-                  Call Now
-                </a>
+              <div className="space-y-5">
+                <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+                  <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                    <div>
+                      <div className="flex items-center gap-2 text-sm font-extrabold uppercase tracking-wide text-blue-600">
+                        <Headphones className="h-4 w-4" />
+                        Zoom Phone
+                      </div>
+                      <h2 className="mt-1 text-xl font-extrabold text-slate-950">Call recordings and history</h2>
+                      <p className="mt-1 text-sm text-slate-500">
+                        Matching calls for {leadPhoneNumbers.length > 0 ? leadPhoneNumbers.join(', ') : 'this lead'}.
+                      </p>
+                    </div>
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+                      <div className="form-group">
+                        <label className="form-label">From</label>
+                        <input
+                          type="date"
+                          className="form-input"
+                          value={callDateRange.from}
+                          onChange={(event) =>
+                            setCallDateRange((current) => ({ ...current, from: event.target.value }))
+                          }
+                        />
+                      </div>
+                      <div className="form-group">
+                        <label className="form-label">To</label>
+                        <input
+                          type="date"
+                          className="form-input"
+                          value={callDateRange.to}
+                          onChange={(event) =>
+                            setCallDateRange((current) => ({ ...current, to: event.target.value }))
+                          }
+                        />
+                      </div>
+                      <button type="button" className="btn btn-secondary" onClick={fetchZoomPhoneData} disabled={zoomLoading}>
+                        {zoomLoading ? <div className="loading-spinner" /> : <RefreshCw className="h-4 w-4" />}
+                        Sync
+                      </button>
+                    </div>
+                  </div>
+
+                  {zoomStatus && !zoomStatus.configured && (
+                    <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+                      Zoom Phone credentials are not configured on the backend. Add the Zoom Server-to-Server OAuth
+                      environment variables, then sync again.
+                    </div>
+                  )}
+
+                  {zoomError && zoomStatus?.configured && (
+                    <div className="mt-4 rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
+                      {zoomError}
+                    </div>
+                  )}
+                </div>
+
+                {activeRecordingId && audioUrl && (
+                  <div className="rounded-lg border border-blue-200 bg-blue-50 p-4">
+                    <div className="mb-3 flex items-center gap-2 text-sm font-bold text-blue-800">
+                      <PlayCircle className="h-4 w-4" />
+                      Playing recording {activeRecordingId}
+                    </div>
+                    <audio className="w-full" controls autoPlay src={audioUrl}>
+                      <track kind="captions" />
+                    </audio>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-1 gap-5 2xl:grid-cols-[1fr_420px]">
+                  <div className="rounded-lg border border-slate-200 bg-white shadow-sm">
+                    <div className="border-b border-slate-200 p-4">
+                      <h3 className="text-lg font-extrabold text-slate-950">Call History</h3>
+                      <p className="mt-1 text-sm text-slate-500">
+                        {zoomLoading ? 'Syncing Zoom Phone calls...' : `${zoomCalls.length} matched call records`}
+                      </p>
+                    </div>
+
+                    {zoomLoading ? (
+                      <div className="space-y-3 p-4">
+                        <div className="skeleton h-20" />
+                        <div className="skeleton h-20" />
+                        <div className="skeleton h-20" />
+                      </div>
+                    ) : zoomCalls.length > 0 ? (
+                      <div className="divide-y divide-slate-100">
+                        {zoomCalls.map((call, index) => {
+                          const idForCall = callLogId(call) || `${call.date_time || 'call'}-${index}`;
+                          const nestedRecordings = callRecordings[idForCall] || [];
+                          const hasRecordingHint = Boolean(call.recording_id || call.recording_type);
+
+                          return (
+                            <div key={idForCall} className="p-4">
+                              <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                                <div className="min-w-0">
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <span className={statusTone(call.result || 'New')}>{call.result || 'Unknown'}</span>
+                                    <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-extrabold text-slate-600">
+                                      {call.direction || call.call_type || 'Call'}
+                                    </span>
+                                    {hasRecordingHint && (
+                                      <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-extrabold text-blue-700">
+                                        Recording ready
+                                      </span>
+                                    )}
+                                  </div>
+                                  <h4 className="mt-3 text-base font-extrabold text-slate-950">
+                                    {call.caller_name || call.caller_number || 'Unknown caller'} to{' '}
+                                    {call.callee_name || call.callee_number || 'Unknown recipient'}
+                                  </h4>
+                                  <p className="mt-1 text-sm text-slate-500">
+                                    {formatCallDate(call.date_time || call.answer_start_time)} · {formatDuration(call.duration)}
+                                  </p>
+                                  <p className="mt-1 text-sm text-slate-500">
+                                    Owner: {call.owner?.name || ownerName}
+                                  </p>
+                                </div>
+                                <div className="flex flex-wrap gap-2">
+                                  <a href={`tel:${lead.phone}`} className="btn btn-secondary">
+                                    <Phone className="h-4 w-4" />
+                                    Call
+                                  </a>
+                                  <button
+                                    type="button"
+                                    className="btn btn-primary"
+                                    onClick={() => loadCallRecordings(call)}
+                                    disabled={recordingsLoading[idForCall]}
+                                  >
+                                    {recordingsLoading[idForCall] ? (
+                                      <div className="loading-spinner" />
+                                    ) : (
+                                      <Headphones className="h-4 w-4" />
+                                    )}
+                                    Recordings
+                                  </button>
+                                </div>
+                              </div>
+
+                              {nestedRecordings.length > 0 && (
+                                <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-2">
+                                  {nestedRecordings.map((recording) => {
+                                    const idForRecording = recordingId(recording);
+                                    return (
+                                      <div key={idForRecording} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                                        <div className="flex items-start justify-between gap-3">
+                                          <div>
+                                            <p className="font-extrabold text-slate-900">
+                                              {recording.recording_type || 'Call recording'}
+                                            </p>
+                                            <p className="text-sm text-slate-500">
+                                              {formatCallDate(recording.date_time)} · {formatDuration(recording.duration)}
+                                            </p>
+                                          </div>
+                                          <button
+                                            type="button"
+                                            className="icon-button"
+                                            title="Play recording"
+                                            onClick={() => playRecording(recording)}
+                                            disabled={audioLoadingId === idForRecording}
+                                          >
+                                            {audioLoadingId === idForRecording ? (
+                                              <div className="loading-spinner" />
+                                            ) : (
+                                              <PlayCircle className="h-4 w-4" />
+                                            )}
+                                          </button>
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div className="lead-empty-state">
+                        <Phone className="h-10 w-10" />
+                        <h3>No Zoom Phone calls matched</h3>
+                        <p>Check the date range or add the lead's Zoom Phone number in the profile.</p>
+                        <a href={`tel:${lead.phone}`} className="btn btn-primary">
+                          <Phone className="h-4 w-4" />
+                          Call Now
+                        </a>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="rounded-lg border border-slate-200 bg-white shadow-sm">
+                    <div className="border-b border-slate-200 p-4">
+                      <h3 className="text-lg font-extrabold text-slate-950">All Recordings</h3>
+                      <p className="mt-1 text-sm text-slate-500">
+                        {zoomRecordings.length} matched recordings for this lead
+                      </p>
+                    </div>
+
+                    {zoomRecordings.length > 0 ? (
+                      <div className="divide-y divide-slate-100">
+                        {zoomRecordings.map((recording, index) => {
+                          const idForRecording = recordingId(recording) || `${recording.date_time || 'recording'}-${index}`;
+                          return (
+                            <div key={idForRecording} className="p-4">
+                              <div className="flex items-start justify-between gap-4">
+                                <div className="min-w-0">
+                                  <p className="font-extrabold text-slate-950">
+                                    {recording.caller_name || recording.caller_number || 'Unknown'} to{' '}
+                                    {recording.callee_name || recording.callee_number || 'Unknown'}
+                                  </p>
+                                  <p className="mt-1 text-sm text-slate-500">
+                                    {formatCallDate(recording.date_time)} · {formatDuration(recording.duration)}
+                                  </p>
+                                  <p className="mt-1 text-xs font-bold uppercase text-slate-400">
+                                    {recording.recording_type || recording.direction || 'Recording'}
+                                  </p>
+                                </div>
+                                <div className="flex gap-2">
+                                  <button
+                                    type="button"
+                                    className="icon-button"
+                                    title="Play recording"
+                                    onClick={() => playRecording(recording)}
+                                    disabled={audioLoadingId === idForRecording}
+                                  >
+                                    {audioLoadingId === idForRecording ? (
+                                      <div className="loading-spinner" />
+                                    ) : (
+                                      <PlayCircle className="h-4 w-4" />
+                                    )}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="icon-button"
+                                    title="Download recording"
+                                    onClick={() => downloadRecording(recording)}
+                                    disabled={audioLoadingId === idForRecording}
+                                  >
+                                    <Download className="h-4 w-4" />
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div className="lead-empty-state">
+                        <Headphones className="h-10 w-10" />
+                        <h3>No recordings found</h3>
+                        <p>Recordings will appear after Zoom Phone returns a matched caller or callee number.</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
             )}
 
@@ -723,6 +1196,17 @@ const LeadDetails: React.FC = () => {
                     />
                   </div>
                   <div className="form-group">
+                    <label className="form-label">Zoom Phone Number</label>
+                    <input
+                      className="form-input"
+                      value={formData.zoomPhoneNumber}
+                      onChange={(event) =>
+                        setFormData((current) => ({ ...current, zoomPhoneNumber: event.target.value }))
+                      }
+                      placeholder="Number used in Zoom Phone call logs"
+                    />
+                  </div>
+                  <div className="form-group">
                     <label className="form-label">Position</label>
                     <input
                       className="form-input"
@@ -764,6 +1248,10 @@ const LeadDetails: React.FC = () => {
                   <div className="lead-summary-row">
                     <span>Folder</span>
                     <strong>{lead.folder || 'Uncategorized'}</strong>
+                  </div>
+                  <div className="lead-summary-row">
+                    <span>Zoom Phone</span>
+                    <strong>{lead.zoomPhoneNumber || 'Not linked'}</strong>
                   </div>
                   <div className="lead-summary-row">
                     <span>Lead score</span>

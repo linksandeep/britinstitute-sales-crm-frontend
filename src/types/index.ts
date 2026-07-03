@@ -48,6 +48,7 @@ export interface Lead {
   email: string;
   phone: string;
   whatsapp?: string;
+  zoomPhoneNumber?: string;
   position: string;
   folder: string;
   source: LeadSource;
@@ -200,6 +201,8 @@ export interface CreateLeadForm {
   name: string;
   email: string;
   phone: string;
+  whatsapp?: string;
+  zoomPhoneNumber?: string;
   position?: string;
   folder?: string;
   source: LeadSource;
@@ -211,6 +214,8 @@ export interface UpdateLeadForm {
   name?: string;
   email?: string;
   phone?: string;
+  whatsapp?: string;
+  zoomPhoneNumber?: string;
   position?: string;
   folder?: string;
   source?: LeadSource;
@@ -226,6 +231,82 @@ export interface AssignLeadForm {
 export interface AddNoteForm {
   leadId: string;
   content: string;
+}
+
+export interface ZoomPhoneStatus {
+  configured: boolean;
+  missing: string[];
+  provider: string;
+  mode: string;
+}
+
+export interface ZoomPhoneOwner {
+  id?: string;
+  name?: string;
+  extension_number?: string;
+  phone_number?: string;
+  type?: string;
+}
+
+export interface ZoomPhoneCallLog {
+  id?: string;
+  call_id?: string;
+  call_type?: string;
+  direction?: string;
+  duration?: number;
+  date_time?: string;
+  answer_start_time?: string;
+  call_end_time?: string;
+  caller_number?: string;
+  callee_number?: string;
+  caller_did_number?: string;
+  callee_did_number?: string;
+  caller_name?: string;
+  callee_name?: string;
+  result?: string;
+  path?: string;
+  recording_id?: string;
+  recording_type?: string;
+  owner?: ZoomPhoneOwner;
+  user_id?: string;
+}
+
+export interface ZoomPhoneRecording {
+  id?: string;
+  call_id?: string;
+  call_log_id?: string;
+  call_element_id?: string;
+  caller_number?: string;
+  callee_number?: string;
+  caller_name?: string;
+  callee_name?: string;
+  direction?: string;
+  duration?: number;
+  date_time?: string;
+  end_time?: string;
+  download_url?: string;
+  file_url?: string;
+  transcript_download_url?: string;
+  recording_type?: string;
+  owner?: ZoomPhoneOwner;
+}
+
+export interface ZoomPhoneLeadCallsResponse {
+  call_logs: ZoomPhoneCallLog[];
+  total_records?: number;
+  next_page_token?: string;
+  page_size?: number;
+  page_count?: number;
+  matched_numbers?: string[];
+}
+
+export interface ZoomPhoneLeadRecordingsResponse {
+  recordings: ZoomPhoneRecording[];
+  total_records?: number;
+  next_page_token?: string;
+  page_size?: number;
+  page_count?: number;
+  matched_numbers?: string[];
 }
 
 // Excel Import Types
