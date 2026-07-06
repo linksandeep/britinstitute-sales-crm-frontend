@@ -8,12 +8,10 @@ import RestrictedPopup from './components/RestrictedAccess';
 
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Calls = lazy(() => import('./pages/Calls'));
-const ZoomMeetings = lazy(() => import('./pages/ZoomMeetings'));
 const AllLeads = lazy(() => import('./pages/AllLeads'));
 const MyLeads = lazy(() => import('./pages/MyLeads'));
 const AddLead = lazy(() => import('./pages/AddLead'));
 const SmartImportLeads = lazy(() => import('./pages/SmartImportLeads'));
-const AssignLeads = lazy(() => import('./pages/AssignLeads'));
 const LeadDetails = lazy(() => import('./pages/LeadDetails'));
 const UserManagement = lazy(() => import('./pages/UserManagement'));
 const StatusManagement = lazy(() => import('./pages/StatusManagement'));
@@ -96,14 +94,6 @@ const AppRoutes: React.FC = () => (
         }
       />
       <Route
-        path="/zoom-meetings"
-        element={
-          <ProtectedPage>
-            <ZoomMeetings />
-          </ProtectedPage>
-        }
-      />
-      <Route
         path="/leads"
         element={
           <ProtectedPage>
@@ -145,11 +135,7 @@ const AppRoutes: React.FC = () => (
       />
       <Route
         path="/leads/assign"
-        element={
-          <ProtectedPage>
-            <AssignLeads />
-          </ProtectedPage>
-        }
+        element={<Navigate to="/leads" replace />}
       />
       <Route
         path="/leads/:id"

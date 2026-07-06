@@ -5,7 +5,6 @@ import {
   BarChart3,
   CalendarCheck,
   ClipboardList,
-  FileSpreadsheet,
   Headphones,
   LayoutDashboard,
   PhoneCall,
@@ -16,7 +15,6 @@ import {
   Upload,
   UserCheck,
   UserPlus,
-  Video,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import Logo from './Logo';
@@ -52,10 +50,9 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
       ]
     },
     {
-      label: 'Call Center',
+      label: 'Calling',
       items: [
         { name: 'Phone Calling', href: '/calls', icon: Headphones, badge: 'Live' },
-        { name: 'Zoom Meetings', href: '/zoom-meetings', icon: Video, badge: 'Live' },
         { name: 'Call History', href: '/calls?view=history', icon: PhoneCall },
         { name: 'Reports', href: '/analytics', icon: SlidersHorizontal, adminOnly: true }
       ]
@@ -66,8 +63,7 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
         { name: 'All Leads', href: '/leads', icon: ClipboardList, adminOnly: true },
         { name: 'My Leads', href: '/my-leads', icon: Target },
         { name: 'Add Lead', href: '/leads/new', icon: UserPlus },
-        { name: 'Import Leads', href: '/leads/import', icon: Upload, adminOnly: true },
-        { name: 'Assign Leads', href: '/leads/assign', icon: FileSpreadsheet, adminOnly: true }
+        { name: 'Import Leads', href: '/leads/import', icon: Upload, adminOnly: true }
       ]
     },
     {
@@ -101,7 +97,7 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
             <Logo />
             <div>
               <h1 className="sidebar-brand__title">Brit CRM</h1>
-              <p className="sidebar-brand__meta">Call Center Suite</p>
+              <p className="sidebar-brand__meta">Brit Institute CRM</p>
             </div>
           </div>
         </div>

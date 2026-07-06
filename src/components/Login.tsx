@@ -44,7 +44,7 @@ const Login: React.FC = () => {
             <Logo />
             <div>
               <h1 className="text-xl font-extrabold text-gray-950">Brit CRM</h1>
-              <p className="text-sm font-semibold text-gray-500">Call Center Suite</p>
+              <p className="text-sm font-semibold text-gray-500">Brit Institute CRM</p>
             </div>
           </div>
 

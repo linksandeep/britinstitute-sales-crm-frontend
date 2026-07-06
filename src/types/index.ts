@@ -250,6 +250,20 @@ export interface ZoomPhoneOwner {
   type?: string;
 }
 
+export interface ZoomPhoneCrmUserMatch {
+  id: string;
+  name: string;
+  email?: string;
+  phone?: string;
+}
+
+export interface ZoomPhoneCrmLeadMatch {
+  id: string;
+  name: string;
+  email?: string;
+  phone?: string;
+}
+
 export interface ZoomPhoneCallLog {
   id?: string;
   call_id?: string;
@@ -263,6 +277,8 @@ export interface ZoomPhoneCallLog {
   callee_number?: string;
   caller_did_number?: string;
   callee_did_number?: string;
+  caller_phone_number?: string;
+  callee_phone_number?: string;
   caller_name?: string;
   callee_name?: string;
   result?: string;
@@ -271,15 +287,32 @@ export interface ZoomPhoneCallLog {
   recording_type?: string;
   owner?: ZoomPhoneOwner;
   user_id?: string;
+  site?: {
+    id?: string;
+    name?: string;
+  };
+  normalized_direction?: string;
+  normalized_status?: string;
+  started_at?: string;
+  agent_name?: string;
+  display_phone?: string;
+  recording_count?: number;
+  has_recording?: boolean;
+  recording_download_url?: string;
+  matched_user?: ZoomPhoneCrmUserMatch;
+  matched_lead?: ZoomPhoneCrmLeadMatch;
 }
 
 export interface ZoomPhoneRecording {
   id?: string;
   call_id?: string;
   call_log_id?: string;
+  call_history_id?: string;
   call_element_id?: string;
   caller_number?: string;
+  caller_number_type?: string;
   callee_number?: string;
+  callee_number_type?: string;
   caller_name?: string;
   callee_name?: string;
   direction?: string;
@@ -291,6 +324,13 @@ export interface ZoomPhoneRecording {
   transcript_download_url?: string;
   recording_type?: string;
   owner?: ZoomPhoneOwner;
+  site?: {
+    id?: string;
+    name?: string;
+  };
+  disclaimer_status?: string;
+  matched_user?: ZoomPhoneCrmUserMatch;
+  matched_lead?: ZoomPhoneCrmLeadMatch;
 }
 
 export interface ZoomPhoneLeadCallsResponse {
@@ -311,49 +351,174 @@ export interface ZoomPhoneLeadRecordingsResponse {
   matched_numbers?: string[];
 }
 
-export interface ZoomMeetingsStatus {
-  configured: boolean;
-  missing: string[];
-  provider: string;
-  mode: string;
-  defaultHostUserId: string;
-  timezone: string;
+export interface ZoomPhoneAnalyticsSummary {
+  total_calls: number;
+  incoming_calls: number;
+  outgoing_calls: number;
+  missed_calls: number;
+  connected_calls: number;
+  voicemail_calls: number;
+  recorded_calls: number;
+  answer_rate: number;
+  average_call_duration: number;
+  total_talk_time: number;
 }
 
-export interface ZoomMeeting {
-  _id: string;
-  topic: string;
-  agenda?: string;
-  startTime: string;
-  duration: number;
-  timezone: string;
-  lead?: Pick<Lead, '_id' | 'name' | 'email' | 'phone' | 'status'>;
-  createdBy?: Pick<User, '_id' | 'name' | 'email' | 'phone'>;
-  hostUser?: Pick<User, '_id' | 'name' | 'email' | 'phone'>;
-  zoomMeetingId: string;
-  zoomUuid?: string;
-  joinUrl: string;
-  startUrl?: string;
-  password?: string;
-  status: 'scheduled' | 'synced' | 'cancelled';
-  rawZoomResponse?: Record<string, unknown>;
-  lastSyncedAt?: string;
-  createdAt: string;
-  updatedAt: string;
+export interface ZoomPhoneAgentAnalytics {
+  agent: string;
+  extension_number?: string;
+  phone_number?: string;
+  total_calls: number;
+  incoming_calls: number;
+  outgoing_calls: number;
+  connected_calls: number;
+  missed_calls: number;
+  recorded_calls: number;
+  total_talk_time: number;
+  average_call_duration: number;
+  answer_rate: number;
 }
 
-export interface CreateZoomMeetingForm {
-  topic: string;
-  agenda?: string;
-  startTime: string;
-  duration: number;
-  timezone?: string;
-  leadId?: string;
-  hostUserId?: string;
-  hostZoomUserId?: string;
-  joinBeforeHost?: boolean;
-  waitingRoom?: boolean;
-  autoRecording?: 'none' | 'local' | 'cloud';
+export interface ZoomPhoneDailyAnalytics {
+  date: string;
+  total_calls: number;
+  incoming_calls: number;
+  outgoing_calls: number;
+  connected_calls: number;
+  missed_calls: number;
+  recorded_calls: number;
+  total_talk_time: number;
+}
+
+export interface ZoomPhoneAnalyticsBreakdown {
+  label: string;
+  count: number;
+  percentage: number;
+}
+
+export interface ZoomPhoneAnalyticsResponse {
+  from: string;
+  to: string;
+  page_size: number;
+  pages_scanned: number;
+  total_records_scanned: number;
+  call_logs: ZoomPhoneCallLog[];
+  recordings: ZoomPhoneRecording[];
+  recordings_error?: string;
+  summary: ZoomPhoneAnalyticsSummary;
+  agent_stats: ZoomPhoneAgentAnalytics[];
+  daily_stats: ZoomPhoneDailyAnalytics[];
+  status_breakdown: ZoomPhoneAnalyticsBreakdown[];
+  direction_breakdown: ZoomPhoneAnalyticsBreakdown[];
+}
+
+export interface ZoomPhoneNumber {
+  id?: string;
+  number?: string;
+  display_number?: string;
+  source?: string;
+  status?: string;
+  capability?: string[];
+  assignee?: {
+    id?: string;
+    name?: string;
+    extension_number?: string;
+    extension_type?: string;
+    type?: string;
+  };
+  location?: string;
+  emergency_address?: {
+    address_line1?: string;
+    city?: string;
+    state_code?: string;
+    country?: string;
+    zip?: string;
+  };
+  site?: {
+    id?: string;
+    name?: string;
+  };
+}
+
+export interface ZoomPhoneUser {
+  id?: string;
+  phone_user_id?: string;
+  email?: string;
+  name?: string;
+  extension_id?: string;
+  extension_number?: string;
+  status?: string;
+  activation_status?: string;
+  calling_plans?: Array<{
+    type?: string;
+    name?: string;
+    billing_account_id?: string;
+  }>;
+  phone_numbers?: ZoomPhoneNumber[];
+}
+
+export interface ZoomPhoneInventoryResponse {
+  phone_numbers: ZoomPhoneNumber[];
+  users: ZoomPhoneUser[];
+  summary: {
+    total_numbers: number;
+    assigned_numbers: number;
+    unassigned_numbers: number;
+    available_numbers: number;
+    busy_numbers: number;
+    inactive_numbers: number;
+    total_users: number;
+    active_users: number;
+    inactive_users: number;
+  };
+  number_status_breakdown: ZoomPhoneAnalyticsBreakdown[];
+  user_status_breakdown: ZoomPhoneAnalyticsBreakdown[];
+  capability_breakdown: ZoomPhoneAnalyticsBreakdown[];
+  pages_scanned: {
+    numbers: number;
+    users: number;
+  };
+}
+
+export interface ZoomPhoneMetricParty {
+  phone_number?: string;
+  extension_number?: string;
+  device_type?: string;
+  site_id?: string;
+  site_name?: string;
+  name?: string;
+}
+
+export interface ZoomPhoneMetricCall {
+  call_id?: string;
+  direction?: string;
+  duration?: number;
+  date_time?: string;
+  status?: string;
+  result?: string;
+  call_type?: string;
+  caller?: ZoomPhoneMetricParty;
+  callee?: ZoomPhoneMetricParty;
+  owner?: ZoomPhoneOwner;
+  matched_user?: ZoomPhoneCrmUserMatch;
+  connected_number?: string;
+  zoom_account?: string;
+  live_status?: 'on_call' | 'available' | 'recent';
+}
+
+export interface ZoomPhoneLiveUser extends ZoomPhoneUser {
+  matched_user?: ZoomPhoneCrmUserMatch;
+  connected_numbers: string[];
+  live_status: 'on_call' | 'available';
+  active_call_id?: string;
+}
+
+export interface ZoomPhoneLiveStatusResponse {
+  active_calls: ZoomPhoneMetricCall[];
+  recent_calls: ZoomPhoneMetricCall[];
+  phone_users: ZoomPhoneLiveUser[];
+  inventory: ZoomPhoneInventoryResponse;
+  updated_at: string;
 }
 
 // Excel Import Types

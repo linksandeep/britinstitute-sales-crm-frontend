@@ -89,9 +89,9 @@ export const buildCallCenterSnapshot = (stats?: DashboardStats | null): CallCent
         description: 'The activity model can accept summary, disposition, and next-action fields.'
       },
       {
-        name: 'Zoom Calls',
+        name: 'Zoom Phone Enhancements',
         status: 'Next Phase',
-        description: 'Reserved for the next phase; not used in the current UI work.'
+        description: 'Reserved for additional phone reports, recording intelligence, and channel analytics.'
       }
     ],
     lastUpdated: stats?.lastUpdated ?? new Date().toISOString()

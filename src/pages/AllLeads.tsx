@@ -48,6 +48,7 @@ const AllLeads: React.FC = () => {
   const [users, setUsers] = useState<User[]>([]);
   const [statusOptions, setStatusOptions] = useState<string[]>([]);
   const [bulkStatus, setBulkStatus] = useState<string>('');
+  const [bulkAssignee, setBulkAssignee] = useState<string>('');
   const [updatingStatus, setUpdatingStatus] = useState(false);
   const [dateRange, setDateRange] = useState<DateFilterState>({ fromDate: '', toDate: '' });
 
@@ -147,9 +148,9 @@ const AllLeads: React.FC = () => {
 
   const fetchUsers = async () => {
     try {
-      const response = await userApi.getUsers();
+      const response = await userApi.getAllUsers();
       if (response.success && response.data) {
-        setUsers(response.data);
+        setUsers(response.data.filter((employee) => employee.isActive));
       }
     } catch (error) {
       console.error('Error fetching users:', error);
@@ -346,32 +347,54 @@ const AllLeads: React.FC = () => {
     return colors[status] || 'bg-gray-100 text-gray-800';
   };
 
-  const handleBulkStatusUpdate = async () => {
+  const handleBulkLeadAction = async () => {
     if (selectedLeads.length === 0) {
       toast.error('Please select leads to update');
       return;
     }
 
-    if (!bulkStatus) {
-      toast.error('Please select a status');
+    if (!bulkStatus && !bulkAssignee) {
+      toast.error('Choose a status, an assignee, or unassign selected leads');
       return;
     }
 
     setUpdatingStatus(true);
 
     try {
-      const response = await leadApi.bulkUpdateStatus(selectedLeads, bulkStatus);
+      const completedActions: string[] = [];
 
-      if (response.success) {
-        toast.success(`Successfully updated ${selectedLeads.length} lead${selectedLeads.length !== 1 ? 's' : ''} to "${bulkStatus}"`);
-        setSelectedLeads([]);
-        setBulkStatus('');
-        fetchLeads(); // Refresh the leads list
-      } else {
-        toast.error(response.message || 'Failed to update lead statuses');
+      if (bulkAssignee) {
+        const assignmentResponse =
+          bulkAssignee === '__unassign__'
+            ? await leadApi.unassignLeads({ leadIds: selectedLeads })
+            : await leadApi.assignLeads({ leadIds: selectedLeads, assignToUserId: bulkAssignee });
+
+        if (!assignmentResponse.success) {
+          toast.error(assignmentResponse.message || 'Failed to update lead assignment');
+          return;
+        }
+
+        completedActions.push(bulkAssignee === '__unassign__' ? 'unassigned' : 'assigned');
       }
+
+      if (bulkStatus) {
+        const response = await leadApi.bulkUpdateStatus(selectedLeads, bulkStatus);
+
+        if (!response.success) {
+          toast.error(response.message || 'Failed to update lead statuses');
+          return;
+        }
+
+        completedActions.push(`status changed to "${bulkStatus}"`);
+      }
+
+      toast.success(`${selectedLeads.length} lead${selectedLeads.length !== 1 ? 's' : ''} ${completedActions.join(' and ')}`);
+      setSelectedLeads([]);
+      setBulkStatus('');
+      setBulkAssignee('');
+      fetchLeads(); // Refresh the leads list
     } catch (error) {
-      toast.error('Failed to update lead statuses');
+      toast.error('Failed to update selected leads');
     } finally {
       setUpdatingStatus(false);
     }
@@ -691,28 +714,6 @@ const AllLeads: React.FC = () => {
         </div>
       )}
 
-      {/* Bulk Actions */}
-      {selectedLeads.length > 0 && user?.role === 'admin' && (
-        <div className="card border-l-4 border-l-blue-500">
-          <div className="card-body">
-            <div className="flex items-center justify-between">
-              <span className="font-medium">
-                {selectedLeads.length} lead{selectedLeads.length > 1 ? 's' : ''} selected
-              </span>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => setDeleteLead({ _id: 'bulk', name: `${selectedLeads.length} leads` } as Lead)}
-                  className="btn btn-danger btn-sm"
-                >
-                  <Trash2 className="w-4 h-4" />
-                  Delete Selected
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Status Groups and Folders */}
       {currentView === 'folders' && (
         <div className="card">
@@ -779,58 +780,94 @@ const AllLeads: React.FC = () => {
         </div>
       )}
 
-      {/* Bulk Status Update Panel */}
+      {/* Bulk Lead Actions Panel */}
       {currentView === 'leads' && (
-        <div className="card border-l-4 border-l-green-500">
+        <div className="card border-l-4 border-l-blue-500">
           <div className="card-body">
-            <div className="flex items-center justify-between mb-4">
+            <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
               <div className="flex items-center gap-3">
-                <CheckCircle className="w-6 h-6 text-green-600" />
+                <CheckCircle className="w-6 h-6 text-blue-600" />
                 <div>
                   <h3 className="text-lg font-semibold text-gray-900">
-                    Bulk Status Update
+                    Bulk Lead Actions
                   </h3>
                   <p className="text-gray-600">
                     {selectedLeads.length > 0 
-                      ? `Update status for ${selectedLeads.length} selected lead${selectedLeads.length > 1 ? 's' : ''}`
-                      : 'Select leads below to update their status'
+                      ? `Manage ${selectedLeads.length} selected lead${selectedLeads.length > 1 ? 's' : ''}`
+                      : 'Select leads below to assign, unassign, update status, or delete'
                     }
                   </p>
                 </div>
               </div>
+              {selectedLeads.length > 0 && (
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => setSelectedLeads([])}
+                  disabled={updatingStatus}
+                >
+                  Clear Selection
+                </button>
+              )}
             </div>
 
-            <div className="flex items-end gap-4">
-              <div className="flex-1">
-                <label className="form-label">Select New Status</label>
+            <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1fr_1fr_auto_auto] xl:items-end">
+              <div>
+                <label className="form-label">Assign Lead</label>
+                <select
+                  value={bulkAssignee}
+                  onChange={(e) => setBulkAssignee(e.target.value)}
+                  className="form-input"
+                  disabled={updatingStatus}
+                >
+                  <option value="">Keep current owner</option>
+                  <option value="__unassign__">Unassign selected leads</option>
+                  {assignedToOptions.map((employee) => (
+                    <option key={employee.id} value={employee.id}>
+                      {employee.name} - {employee.email}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="form-label">Update Status</label>
                 <select
                   value={bulkStatus}
                   onChange={(e) => setBulkStatus(e.target.value)}
                   className="form-input"
                   disabled={updatingStatus}
                 >
-                  <option value="">Choose a status...</option>
+                  <option value="">Keep current status</option>
                   {statusOptions.map(status => (
                     <option key={status} value={status}>{status}</option>
                   ))}
                 </select>
               </div>
               <button
-                onClick={handleBulkStatusUpdate}
-                disabled={selectedLeads.length === 0 || !bulkStatus || updatingStatus}
-                className="btn btn-success"
+                onClick={handleBulkLeadAction}
+                disabled={selectedLeads.length === 0 || (!bulkStatus && !bulkAssignee) || updatingStatus}
+                className="btn btn-primary"
               >
                 {updatingStatus ? (
                   <>
                     <div className="loading-spinner mr-2"></div>
-                    Updating...
+                    Applying...
                   </>
                 ) : (
                   <>
                     <CheckCircle className="w-4 h-4" />
-                    Update {selectedLeads.length > 0 ? selectedLeads.length : ''} Lead{selectedLeads.length !== 1 ? 's' : ''}
+                    Apply Changes
                   </>
                 )}
+              </button>
+              <button
+                type="button"
+                onClick={() => setDeleteLead({ _id: 'bulk', name: `${selectedLeads.length} leads` } as Lead)}
+                className="btn btn-danger"
+                disabled={selectedLeads.length === 0 || updatingStatus}
+              >
+                <Trash2 className="w-4 h-4" />
+                Delete Selected
               </button>
             </div>
           </div>

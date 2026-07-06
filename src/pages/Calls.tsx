@@ -1,121 +1,733 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
+  AlertCircle,
+  BarChart3,
   CalendarClock,
   CheckCircle,
   Clock,
-  FileText,
-  Filter,
+  Download,
   Headphones,
   Mic,
-  Pause,
   PhoneCall,
   Play,
   RefreshCw,
   Search,
-  Tag,
   UserRound,
   Voicemail
 } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { dashboardApi, leadApi } from '../lib/api';
-import type { DashboardStats, Lead } from '../types';
-import {
-  buildCallCenterSnapshot,
-  formatDuration,
-  type CallDirection,
-  type CallOutcome,
-  type CallStatus
-} from '../lib/callCenterData';
+import { leadApi, zoomPhoneApi } from '../lib/api';
+import { formatDuration, formatTalkTime } from '../lib/callCenterData';
+import type {
+  Lead,
+  ZoomPhoneAnalyticsResponse,
+  ZoomPhoneCallLog,
+  ZoomPhoneInventoryResponse,
+  ZoomPhoneLiveStatusResponse,
+  ZoomPhoneMetricCall,
+  ZoomPhoneRecording,
+  ZoomPhoneStatus
+} from '../types';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 
-const statusClass = (status: CallStatus) => {
-  if (status === 'Connected') return 'status-pill status-pill--green';
-  if (status === 'Missed') return 'status-pill status-pill--rose';
-  if (status === 'In Progress') return 'status-pill status-pill--blue';
-  if (status === 'Queued') return 'status-pill status-pill--amber';
+const formatDateInput = (date: Date) => date.toISOString().slice(0, 10);
+
+const getDefaultDateRange = () => {
+  const to = new Date();
+  const from = new Date(to);
+  from.setDate(from.getDate() - 7);
+  return {
+    from: formatDateInput(from),
+    to: formatDateInput(to)
+  };
+};
+
+const getCallKey = (call: ZoomPhoneCallLog) =>
+  call.id ||
+  call.call_id ||
+  `${call.started_at || call.date_time || call.answer_start_time || 'call'}-${call.caller_number || ''}-${call.callee_number || ''}`;
+
+const getCallStartedAt = (call: ZoomPhoneCallLog) =>
+  call.started_at || call.date_time || call.answer_start_time || call.call_end_time || '';
+
+const getCallName = (call: ZoomPhoneCallLog) =>
+  call.matched_lead?.name ||
+  call.caller_name ||
+  call.callee_name ||
+  call.display_phone ||
+  call.caller_number ||
+  call.callee_number ||
+  'Unknown caller';
+
+const getCallPhone = (call: ZoomPhoneCallLog) =>
+  call.matched_lead?.phone ||
+  call.display_phone ||
+  call.caller_number ||
+  call.callee_number ||
+  call.caller_phone_number ||
+  call.callee_phone_number ||
+  call.caller_did_number ||
+  call.callee_did_number ||
+  'No phone number';
+
+const getCallAgent = (call: ZoomPhoneCallLog) =>
+  call.matched_user?.name ||
+  call.agent_name ||
+  call.owner?.name ||
+  call.owner?.extension_number ||
+  call.user_id ||
+  'Unassigned';
+
+const getCallUserFilterKey = (call: ZoomPhoneCallLog) =>
+  call.matched_user?.id ? `crm:${call.matched_user.id}` : `zoom:${getCallAgent(call)}`;
+
+const getCallStatus = (call: ZoomPhoneCallLog) => call.normalized_status || call.result || call.call_type || 'Unknown';
+
+const getCallDirection = (call: ZoomPhoneCallLog) => call.normalized_direction || call.direction || 'Unknown';
+
+const getCallRecordingId = (call: ZoomPhoneCallLog) => call.recording_id || call.id || call.call_id || getCallKey(call);
+
+const getRecordingKey = (recording: ZoomPhoneRecording) =>
+  recording.id ||
+  recording.call_id ||
+  recording.call_log_id ||
+  recording.call_history_id ||
+  recording.call_element_id ||
+  `${recording.date_time || 'recording'}-${recording.caller_number || ''}-${recording.callee_number || ''}`;
+
+const getRecordingName = (recording: ZoomPhoneRecording) =>
+  recording.matched_lead?.name ||
+  recording.caller_name ||
+  recording.callee_name ||
+  recording.caller_number ||
+  recording.callee_number ||
+  'Zoom Phone recording';
+
+const getRecordingPhone = (recording: ZoomPhoneRecording) =>
+  recording.matched_lead?.phone ||
+  (recording.caller_number && recording.callee_number
+    ? `${recording.caller_number} to ${recording.callee_number}`
+    : recording.caller_number || recording.callee_number || 'No phone number');
+
+const getRecordingOwner = (recording: ZoomPhoneRecording) =>
+  recording.matched_user?.name || recording.owner?.name || recording.owner?.extension_number || 'Unknown owner';
+
+const getRecordingUserFilterKey = (recording: ZoomPhoneRecording) =>
+  recording.matched_user?.id ? `crm:${recording.matched_user.id}` : `zoom:${getRecordingOwner(recording)}`;
+
+const statusClass = (status: string) => {
+  if (status === 'Connected' || status === 'Activated' || status === 'available') return 'status-pill status-pill--green';
+  if (status === 'Missed' || status === 'Failed') return 'status-pill status-pill--rose';
+  if (status === 'Voicemail' || status === 'Busy') return 'status-pill status-pill--amber';
+  if (status === 'on_call') return 'status-pill status-pill--blue';
   return 'status-pill status-pill--slate';
 };
 
-const outcomeClass = (outcome: CallOutcome) => {
-  if (outcome === 'Converted' || outcome === 'Qualified') return 'status-pill status-pill--green';
-  if (outcome === 'Follow-up') return 'status-pill status-pill--amber';
-  if (outcome === 'Not Interested' || outcome === 'Wrong Number') return 'status-pill status-pill--rose';
+const directionClass = (direction: string) => {
+  if (direction === 'Incoming' || direction.toLowerCase().includes('in')) return 'status-pill status-pill--violet';
+  if (direction === 'Outgoing' || direction.toLowerCase().includes('out')) return 'status-pill status-pill--blue';
   return 'status-pill status-pill--slate';
 };
 
-const directionClass = (direction: CallDirection) =>
-  direction === 'Incoming' ? 'status-pill status-pill--violet' : 'status-pill status-pill--blue';
+const formatDateTime = (value?: string) => {
+  if (!value) return 'Not available';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString();
+};
+
+const emptyAnalytics: ZoomPhoneAnalyticsResponse = {
+  from: '',
+  to: '',
+  page_size: 0,
+  pages_scanned: 0,
+  total_records_scanned: 0,
+  call_logs: [],
+  recordings: [],
+  summary: {
+    total_calls: 0,
+    incoming_calls: 0,
+    outgoing_calls: 0,
+    missed_calls: 0,
+    connected_calls: 0,
+    voicemail_calls: 0,
+    recorded_calls: 0,
+    answer_rate: 0,
+    average_call_duration: 0,
+    total_talk_time: 0
+  },
+  agent_stats: [],
+  daily_stats: [],
+  status_breakdown: [],
+  direction_breakdown: []
+};
+
+const emptyInventory: ZoomPhoneInventoryResponse = {
+  phone_numbers: [],
+  users: [],
+  summary: {
+    total_numbers: 0,
+    assigned_numbers: 0,
+    unassigned_numbers: 0,
+    available_numbers: 0,
+    busy_numbers: 0,
+    inactive_numbers: 0,
+    total_users: 0,
+    active_users: 0,
+    inactive_users: 0
+  },
+  number_status_breakdown: [],
+  user_status_breakdown: [],
+  capability_breakdown: [],
+  pages_scanned: {
+    numbers: 0,
+    users: 0
+  }
+};
+
+const emptyLiveStatus: ZoomPhoneLiveStatusResponse = {
+  active_calls: [],
+  recent_calls: [],
+  phone_users: [],
+  inventory: emptyInventory,
+  updated_at: ''
+};
+
+type UnifiedCallHistoryItem = {
+  id: string;
+  call?: ZoomPhoneCallLog;
+  recording?: ZoomPhoneRecording;
+  recordings: ZoomPhoneRecording[];
+};
+
+const normalizeMatchPhone = (value?: string) => (value || '').replace(/\D/g, '');
+
+const uniqueStrings = (values: Array<string | undefined>) =>
+  Array.from(new Set(values.map((value) => (value || '').trim()).filter(Boolean)));
+
+const getCallIdentifierValues = (call: ZoomPhoneCallLog) =>
+  uniqueStrings([call.id, call.call_id, call.recording_id, getCallKey(call)]);
+
+const getRecordingIdentifierValues = (recording: ZoomPhoneRecording) =>
+  uniqueStrings([
+    recording.id,
+    recording.call_id,
+    recording.call_log_id,
+    recording.call_history_id,
+    recording.call_element_id,
+    getRecordingKey(recording)
+  ]);
+
+const getCallMatchNumbers = (call: ZoomPhoneCallLog) =>
+  uniqueStrings([
+    call.matched_lead?.phone,
+    call.display_phone,
+    call.caller_number,
+    call.callee_number,
+    call.caller_phone_number,
+    call.callee_phone_number,
+    call.caller_did_number,
+    call.callee_did_number
+  ])
+    .map(normalizeMatchPhone)
+    .filter(Boolean);
+
+const getRecordingMatchNumbers = (recording: ZoomPhoneRecording) =>
+  uniqueStrings([recording.matched_lead?.phone, recording.caller_number, recording.callee_number])
+    .map(normalizeMatchPhone)
+    .filter(Boolean);
+
+const getDateMs = (value?: string) => {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.getTime();
+};
+
+const valuesOverlap = (left: string[], right: string[]) => left.some((value) => right.includes(value));
+
+const recordingBelongsToCall = (call: ZoomPhoneCallLog, recording: ZoomPhoneRecording) => {
+  if (valuesOverlap(getCallIdentifierValues(call), getRecordingIdentifierValues(recording))) {
+    return true;
+  }
+
+  const callNumbers = getCallMatchNumbers(call);
+  const recordingNumbers = getRecordingMatchNumbers(recording);
+  if (!valuesOverlap(callNumbers, recordingNumbers)) return false;
+
+  const callTime = getDateMs(getCallStartedAt(call));
+  const recordingTime = getDateMs(recording.date_time || recording.end_time);
+  if (!callTime || !recordingTime) return false;
+
+  const timeDifference = Math.abs(callTime - recordingTime);
+  const durationDifference = Math.abs((call.duration || 0) - (recording.duration || 0));
+
+  return timeDifference <= 90_000 || (timeDifference <= 5 * 60_000 && durationDifference <= 3);
+};
+
+const getHistoryPrimaryRecording = (item: UnifiedCallHistoryItem) => item.recordings[0] || item.recording;
+
+const getHistoryName = (item: UnifiedCallHistoryItem) =>
+  item.call ? getCallName(item.call) : item.recording ? getRecordingName(item.recording) : 'Zoom Phone call';
+
+const getHistoryPhone = (item: UnifiedCallHistoryItem) =>
+  item.call ? getCallPhone(item.call) : item.recording ? getRecordingPhone(item.recording) : 'No phone number';
+
+const getHistoryAgent = (item: UnifiedCallHistoryItem) =>
+  item.call ? getCallAgent(item.call) : item.recording ? getRecordingOwner(item.recording) : 'Unknown owner';
+
+const getHistoryUserFilterKey = (item: UnifiedCallHistoryItem) =>
+  item.call ? getCallUserFilterKey(item.call) : item.recording ? getRecordingUserFilterKey(item.recording) : 'zoom:unknown';
+
+const getHistoryStatus = (item: UnifiedCallHistoryItem) => (item.call ? getCallStatus(item.call) : 'Recorded');
+
+const getHistoryDirection = (item: UnifiedCallHistoryItem) =>
+  item.call ? getCallDirection(item.call) : item.recording?.direction || 'Unknown';
+
+const getHistoryDuration = (item: UnifiedCallHistoryItem) =>
+  item.call?.duration || getHistoryPrimaryRecording(item)?.duration || 0;
+
+const getHistoryStartedAt = (item: UnifiedCallHistoryItem) =>
+  (item.call && getCallStartedAt(item.call)) || item.recording?.date_time || item.recording?.end_time || '';
+
+const getHistoryLeadEmail = (item: UnifiedCallHistoryItem) => item.call?.matched_lead?.email || item.recording?.matched_lead?.email;
+
+const getHistoryUserEmail = (item: UnifiedCallHistoryItem) => item.call?.matched_user?.email || item.recording?.matched_user?.email;
+
+const getHistoryRecordingCount = (item: UnifiedCallHistoryItem) => {
+  if (item.recordings.length > 0) return item.recordings.length;
+  if (item.call?.has_recording || item.call?.recording_download_url || item.call?.recording_id) return item.call.recording_count || 1;
+  return 0;
+};
+
+const hasHistoryRecording = (item: UnifiedCallHistoryItem) => getHistoryRecordingCount(item) > 0;
+
+const getMetricCallAgent = (call: ZoomPhoneMetricCall) =>
+  call.matched_user?.name || call.caller?.name || call.callee?.name || call.owner?.name || 'Zoom user';
+
+const getMetricPartyText = (call: ZoomPhoneMetricCall) => {
+  const caller = call.caller?.phone_number || call.caller?.extension_number || 'Unknown caller';
+  const callee = call.callee?.phone_number || call.callee?.extension_number || 'Unknown recipient';
+  return `${caller} to ${callee}`;
+};
 
 const Calls: React.FC = () => {
   const { user } = useAuth();
-  const [stats, setStats] = useState<DashboardStats | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const activeView = searchParams.get('view') === 'history' ? 'history' : 'live';
+  const defaultRange = useMemo(getDefaultDateRange, []);
+  const [fromDate, setFromDate] = useState(defaultRange.from);
+  const [toDate, setToDate] = useState(defaultRange.to);
+  const [zoomStatus, setZoomStatus] = useState<ZoomPhoneStatus | null>(null);
+  const [analytics, setAnalytics] = useState<ZoomPhoneAnalyticsResponse>(emptyAnalytics);
+  const [inventory, setInventory] = useState<ZoomPhoneInventoryResponse>(emptyInventory);
+  const [liveStatus, setLiveStatus] = useState<ZoomPhoneLiveStatusResponse>(emptyLiveStatus);
   const [loading, setLoading] = useState(true);
+  const [zoomError, setZoomError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState<CallStatus | 'All'>('All');
-  const [directionFilter, setDirectionFilter] = useState<CallDirection | 'All'>('All');
-  const [outcomeFilter, setOutcomeFilter] = useState<CallOutcome | 'All'>('All');
+  const [statusFilter, setStatusFilter] = useState('All');
+  const [directionFilter, setDirectionFilter] = useState('All');
+  const [userFilter, setUserFilter] = useState('All');
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [isPlaying, setIsPlaying] = useState(false);
   const [callQueueLeads, setCallQueueLeads] = useState<Lead[]>([]);
+  const [audioUrl, setAudioUrl] = useState<string | null>(null);
+  const [audioCallId, setAudioCallId] = useState<string | null>(null);
+  const [recordingLoading, setRecordingLoading] = useState(false);
   const debouncedQuery = useDebouncedValue(query, 220);
-  const snapshot = useMemo(() => buildCallCenterSnapshot(stats), [stats]);
 
-  const fetchStats = useCallback(async () => {
+  const setActiveView = (view: 'live' | 'history') => {
+    const nextParams = new URLSearchParams(searchParams);
+    if (view === 'history') {
+      nextParams.set('view', 'history');
+    } else {
+      nextParams.delete('view');
+    }
+    setSearchParams(nextParams, { replace: true });
+  };
+
+  const fetchData = useCallback(async () => {
     setLoading(true);
-    const [statsResponse, queueResponse] = await Promise.all([
-      user?.role === 'admin' ? dashboardApi.getAdminStats() : dashboardApi.getStats(),
-      user?.role === 'admin'
-        ? leadApi.getLeads({ status: ['New', 'Follow-up', 'Call Back'] }, 1, 8)
-        : leadApi.getMyLeads(1, 8)
-    ]);
+    setZoomError(null);
 
-    if (statsResponse.success && statsResponse.data) {
-      setStats(statsResponse.data);
+    try {
+      const queuePromise =
+        user?.role === 'admin'
+          ? leadApi.getLeads({ status: ['New', 'Follow-up', 'Call Back'] }, 1, 8)
+          : leadApi.getMyLeads(1, 8);
+
+      const [statusResponse, queueResponse] = await Promise.all([zoomPhoneApi.getStatus(), queuePromise]);
+
+      if (statusResponse.success && statusResponse.data) {
+        setZoomStatus(statusResponse.data);
+      } else {
+        setZoomStatus(null);
+        setZoomError(statusResponse.message || 'Unable to read Zoom Phone configuration');
+        setAnalytics(emptyAnalytics);
+        setInventory(emptyInventory);
+        setLiveStatus(emptyLiveStatus);
+        return;
+      }
+
+      if (queueResponse.success) {
+        setCallQueueLeads(queueResponse.data || []);
+      }
+
+      if (user?.role !== 'admin') {
+        setAnalytics(emptyAnalytics);
+        setInventory(emptyInventory);
+        setLiveStatus(emptyLiveStatus);
+        return;
+      }
+
+      if (statusResponse.data.configured === false) {
+        setAnalytics(emptyAnalytics);
+        setInventory(emptyInventory);
+        setLiveStatus(emptyLiveStatus);
+        setZoomError(`Zoom Phone is not configured. Missing: ${statusResponse.data.missing.join(', ')}`);
+        return;
+      }
+
+      const today = formatDateInput(new Date());
+      const [analyticsResponse, inventoryResponse, liveResponse] = await Promise.all([
+        zoomPhoneApi.getAnalytics({
+          from: fromDate,
+          to: toDate,
+          pageSize: 300,
+          maxPages: 5
+        }),
+        zoomPhoneApi.getInventory({
+          pageSize: 300,
+          maxPages: 5
+        }),
+        zoomPhoneApi.getLiveStatus({
+          from: today,
+          to: today,
+          pageSize: 100,
+          maxPages: 2
+        })
+      ]);
+
+      if (analyticsResponse.success && analyticsResponse.data) {
+        setAnalytics(analyticsResponse.data);
+      } else {
+        setAnalytics(emptyAnalytics);
+        setZoomError(analyticsResponse.message || 'Unable to sync Zoom Phone call history');
+      }
+
+      if (inventoryResponse.success && inventoryResponse.data) {
+        setInventory(inventoryResponse.data);
+      } else {
+        setInventory(emptyInventory);
+        setZoomError((current) => current || inventoryResponse.message || 'Unable to sync Zoom Phone inventory');
+      }
+
+      if (liveResponse.success && liveResponse.data) {
+        setLiveStatus(liveResponse.data);
+      } else {
+        setLiveStatus(emptyLiveStatus);
+        setZoomError((current) => current || liveResponse.message || 'Unable to sync live Zoom Phone status');
+      }
+    } catch (error) {
+      setZoomError(error instanceof Error ? error.message : 'Unable to load Zoom Phone data');
+      setAnalytics(emptyAnalytics);
+      setInventory(emptyInventory);
+      setLiveStatus(emptyLiveStatus);
+    } finally {
+      setLoading(false);
     }
-
-    if (queueResponse.success && queueResponse.data) {
-      setCallQueueLeads(queueResponse.data);
-    }
-
-    setLoading(false);
-  }, [user?.role]);
+  }, [fromDate, toDate, user?.role]);
 
   useEffect(() => {
-    fetchStats();
-  }, [fetchStats]);
+    fetchData();
+  }, [fetchData]);
 
-  const filteredRecords = useMemo(() => {
+  useEffect(() => {
+    return () => {
+      if (audioUrl) URL.revokeObjectURL(audioUrl);
+    };
+  }, [audioUrl]);
+
+  const unifiedHistory = useMemo(() => {
+    const usedRecordingKeys = new Set<string>();
+    const historyItems: UnifiedCallHistoryItem[] = analytics.call_logs.map((call) => {
+      const recordings = analytics.recordings.filter((recording) => recordingBelongsToCall(call, recording));
+      recordings.forEach((recording) => usedRecordingKeys.add(getRecordingKey(recording)));
+
+      return {
+        id: getCallKey(call),
+        call,
+        recording: recordings[0],
+        recordings
+      };
+    });
+
+    analytics.recordings.forEach((recording) => {
+      const recordingKey = getRecordingKey(recording);
+      if (usedRecordingKeys.has(recordingKey)) return;
+
+      historyItems.push({
+        id: `recording:${recordingKey}`,
+        recording,
+        recordings: [recording]
+      });
+    });
+
+    return historyItems.sort((left, right) => {
+      const leftDate = getDateMs(getHistoryStartedAt(left)) || 0;
+      const rightDate = getDateMs(getHistoryStartedAt(right)) || 0;
+      return rightDate - leftDate;
+    });
+  }, [analytics.call_logs, analytics.recordings]);
+
+  const availableStatuses = useMemo(
+    () => Array.from(new Set(unifiedHistory.map(getHistoryStatus))).filter(Boolean).sort(),
+    [unifiedHistory]
+  );
+
+  const availableDirections = useMemo(
+    () => Array.from(new Set(unifiedHistory.map(getHistoryDirection))).filter(Boolean).sort(),
+    [unifiedHistory]
+  );
+
+  const userOptions = useMemo(() => {
+    const options = new Map<string, { label: string; meta: string }>();
+
+    analytics.call_logs.forEach((call) => {
+      const key = getCallUserFilterKey(call);
+      if (!options.has(key)) {
+        options.set(key, {
+          label: getCallAgent(call),
+          meta: call.matched_user?.email || call.owner?.phone_number || call.owner?.extension_number || 'Zoom Phone'
+        });
+      }
+    });
+
+    analytics.recordings.forEach((recording) => {
+      const key = getRecordingUserFilterKey(recording);
+      if (!options.has(key)) {
+        options.set(key, {
+          label: getRecordingOwner(recording),
+          meta: recording.matched_user?.email || recording.owner?.phone_number || recording.owner?.extension_number || 'Zoom Phone'
+        });
+      }
+    });
+
+    liveStatus.phone_users.forEach((phoneUser) => {
+      const key = phoneUser.matched_user?.id ? `crm:${phoneUser.matched_user.id}` : `zoom:${phoneUser.name || phoneUser.email}`;
+      if (!options.has(key)) {
+        options.set(key, {
+          label: phoneUser.matched_user?.name || phoneUser.name || phoneUser.email || 'Zoom user',
+          meta: phoneUser.matched_user?.email || phoneUser.email || phoneUser.connected_numbers.join(', ') || 'Zoom Phone'
+        });
+      }
+    });
+
+    return Array.from(options.entries())
+      .map(([value, option]) => ({ value, ...option }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [analytics.call_logs, analytics.recordings, liveStatus.phone_users]);
+
+  const filteredHistory = useMemo(() => {
     const normalizedQuery = debouncedQuery.trim().toLowerCase();
 
-    return snapshot.records.filter((record) => {
-      const matchesSearch =
-        !normalizedQuery ||
-        record.customerName.toLowerCase().includes(normalizedQuery) ||
-        record.phone.toLowerCase().includes(normalizedQuery) ||
-        record.email.toLowerCase().includes(normalizedQuery) ||
-        record.agent.toLowerCase().includes(normalizedQuery);
-      const matchesStatus = statusFilter === 'All' || record.status === statusFilter;
-      const matchesDirection = directionFilter === 'All' || record.direction === directionFilter;
-      const matchesOutcome = outcomeFilter === 'All' || record.outcome === outcomeFilter;
+    return unifiedHistory.filter((item) => {
+      const call = item.call;
+      const recording = item.recording;
+      const searchable = [
+        getHistoryName(item),
+        getHistoryPhone(item),
+        getHistoryAgent(item),
+        getHistoryStatus(item),
+        getHistoryDirection(item),
+        getHistoryPrimaryRecording(item)?.recording_type,
+        getHistoryPrimaryRecording(item)?.site?.name,
+        getHistoryPrimaryRecording(item)?.owner?.phone_number,
+        getHistoryPrimaryRecording(item)?.owner?.extension_number,
+        call?.matched_lead?.email,
+        recording?.matched_lead?.email,
+        call?.matched_user?.email,
+        recording?.matched_user?.email,
+        call?.matched_user?.phone,
+        recording?.matched_user?.phone,
+        call?.caller_number,
+        call?.callee_number,
+        recording?.caller_number,
+        recording?.callee_number,
+        call?.owner?.phone_number,
+        call?.owner?.extension_number,
+        call?.site?.name,
+        call?.result,
+        call?.path
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
 
-      return matchesSearch && matchesStatus && matchesDirection && matchesOutcome;
+      const matchesSearch = !normalizedQuery || searchable.includes(normalizedQuery);
+      const matchesStatus = statusFilter === 'All' || getHistoryStatus(item) === statusFilter;
+      const matchesDirection = directionFilter === 'All' || getHistoryDirection(item) === directionFilter;
+      const matchesUser = userFilter === 'All' || getHistoryUserFilterKey(item) === userFilter;
+
+      return matchesSearch && matchesStatus && matchesDirection && matchesUser;
     });
-  }, [debouncedQuery, directionFilter, outcomeFilter, snapshot.records, statusFilter]);
+  }, [debouncedQuery, directionFilter, statusFilter, unifiedHistory, userFilter]);
 
   useEffect(() => {
-    if (filteredRecords.length === 0) {
+    if (filteredHistory.length === 0) {
       setSelectedId(null);
       return;
     }
 
-    if (!selectedId || !filteredRecords.some((record) => record.id === selectedId)) {
-      setSelectedId(filteredRecords[0].id);
+    if (!selectedId || !filteredHistory.some((item) => item.id === selectedId)) {
+      setSelectedId(filteredHistory[0].id);
     }
-  }, [filteredRecords, selectedId]);
+  }, [filteredHistory, selectedId]);
 
-  const selectedRecord = filteredRecords.find((record) => record.id === selectedId) || snapshot.records[0];
+  const selectedHistoryItem = filteredHistory.find((item) => item.id === selectedId) || filteredHistory[0];
+  const summary = analytics.summary;
+  const liveInventory = liveStatus.inventory.summary.total_numbers > 0 ? liveStatus.inventory : inventory;
+  const liveInventorySummary = liveInventory.summary;
   const unassignedQueueCount = callQueueLeads.filter((lead) => !lead.assignedTo && !lead.assignedToUser).length;
+
+  const resetAudio = () => {
+    if (audioUrl) URL.revokeObjectURL(audioUrl);
+    setAudioUrl(null);
+    setAudioCallId(null);
+  };
+
+  const loadRecordingFile = async (recordingId: string, recordingKey: string, downloadUrl?: string) => {
+    if (!recordingId) return;
+    if (audioUrl && audioCallId === recordingKey) return;
+
+    setRecordingLoading(true);
+    try {
+      const blob = await zoomPhoneApi.downloadAccountRecordingAudio(recordingId, { downloadUrl });
+      resetAudio();
+      setAudioUrl(URL.createObjectURL(blob));
+      setAudioCallId(recordingKey);
+    } catch (error) {
+      setZoomError(error instanceof Error ? error.message : 'Unable to load this Zoom Phone recording');
+    } finally {
+      setRecordingLoading(false);
+    }
+  };
+
+  const loadHistoryRecording = async (item: UnifiedCallHistoryItem) => {
+    const recording = getHistoryPrimaryRecording(item);
+    if (recording) {
+      await loadRecordingFile(getRecordingKey(recording), item.id, recording.download_url || recording.file_url);
+      return;
+    }
+
+    if (!item.call?.has_recording && !item.call?.recording_download_url && !item.call?.recording_id) return;
+    await loadRecordingFile(getCallRecordingId(item.call), item.id, item.call.recording_download_url);
+  };
+
+  const downloadHistoryRecording = async (item: UnifiedCallHistoryItem) => {
+    const recording = getHistoryPrimaryRecording(item);
+    const recordingId = recording ? getRecordingKey(recording) : item.call ? getCallRecordingId(item.call) : '';
+    if (!recordingId) return;
+
+    setRecordingLoading(true);
+    try {
+      const blob = await zoomPhoneApi.downloadAccountRecordingAudio(recordingId, {
+        downloadUrl: recording?.download_url || recording?.file_url || item.call?.recording_download_url
+      });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `zoom-phone-recording-${recordingId}.mp3`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      setZoomError(error instanceof Error ? error.message : 'Unable to download this Zoom Phone recording');
+    } finally {
+      setRecordingLoading(false);
+    }
+  };
+
+  const liveCards = [
+    {
+      label: 'Active Calls',
+      value: liveStatus.active_calls.length,
+      helper: liveStatus.updated_at ? `Updated ${formatDateTime(liveStatus.updated_at)}` : 'Current Zoom Phone metrics',
+      icon: Headphones,
+      tone: 'metric-card--blue'
+    },
+    {
+      label: 'Zoom Numbers',
+      value: liveInventorySummary.total_numbers,
+      helper: `${liveInventorySummary.assigned_numbers} assigned numbers`,
+      icon: PhoneCall,
+      tone: 'metric-card--green'
+    },
+    {
+      label: 'Phone Users',
+      value: liveStatus.phone_users.length || liveInventorySummary.total_users,
+      helper: `${liveStatus.phone_users.filter((phoneUser) => phoneUser.live_status === 'on_call').length} currently on call`,
+      icon: UserRound,
+      tone: 'metric-card--amber'
+    },
+    {
+      label: 'Ready To Call',
+      value: callQueueLeads.length,
+      helper: `${unassignedQueueCount} unassigned leads`,
+      icon: CalendarClock,
+      tone: 'metric-card--slate'
+    }
+  ];
+
+  const historyCards = [
+    {
+      label: 'Total Calls',
+      value: summary.total_calls,
+      helper: `${analytics.pages_scanned} Zoom page${analytics.pages_scanned === 1 ? '' : 's'} scanned`,
+      icon: PhoneCall,
+      tone: 'metric-card--blue'
+    },
+    {
+      label: 'Incoming',
+      value: summary.incoming_calls,
+      helper: 'Customer calls received',
+      icon: Headphones,
+      tone: 'metric-card--green'
+    },
+    {
+      label: 'Outgoing',
+      value: summary.outgoing_calls,
+      helper: 'Agent calls placed',
+      icon: BarChart3,
+      tone: 'metric-card--amber'
+    },
+    {
+      label: 'Missed',
+      value: summary.missed_calls,
+      helper: 'Needs callback follow-up',
+      icon: Voicemail,
+      tone: 'metric-card--rose'
+    },
+    {
+      label: 'Answer Rate',
+      value: `${summary.answer_rate}%`,
+      helper: `${summary.connected_calls} connected calls`,
+      icon: CheckCircle,
+      tone: 'metric-card--green'
+    },
+    {
+      label: 'Avg Duration',
+      value: formatDuration(summary.average_call_duration),
+      helper: `${formatTalkTime(summary.total_talk_time)} total talk time`,
+      icon: Clock,
+      tone: 'metric-card--blue'
+    },
+    {
+      label: 'Recordings',
+      value: analytics.recordings.length || summary.recorded_calls,
+      helper: `${analytics.recordings.length} recording files synced`,
+      icon: Mic,
+      tone: 'metric-card--amber'
+    }
+  ];
 
   return (
     <div className="page-stack">
@@ -123,17 +735,16 @@ const Calls: React.FC = () => {
         <div>
           <div className="page-header__eyebrow">
             <PhoneCall className="h-4 w-4" />
-            Phone Calling
+            Zoom Phone
           </div>
-          <h1 className="page-title">Call Management</h1>
+          <h1 className="page-title">Phone Calling</h1>
           <p className="page-description">
-            Manage the real phone-calling worklist from your CRM leads. Call history will appear here only when
-            the phone service exposes real call records.
+            Track live Zoom Phone usage, call recordings, user ownership, and lead follow-ups from one CRM workspace.
           </p>
         </div>
         <div className="page-actions">
-          <button type="button" className="btn btn-secondary" onClick={fetchStats}>
-            <RefreshCw className="h-4 w-4" />
+          <button type="button" className="btn btn-secondary" onClick={fetchData} disabled={loading}>
+            <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
             Refresh
           </button>
           <Link to={callQueueLeads[0]?._id ? `/leads/${callQueueLeads[0]._id}` : '/leads'} className="btn btn-primary">
@@ -143,377 +754,628 @@ const Calls: React.FC = () => {
         </div>
       </div>
 
-      <div className="metric-grid">
-        <div className="metric-card metric-card--blue">
-          <div className="metric-card__top">
-            <p className="metric-card__label">Ready To Call</p>
-            <Headphones className="h-5 w-5" />
-          </div>
-          <p className="metric-card__value">{loading ? '...' : callQueueLeads.length}</p>
-          <p className="metric-card__change">Real leads in calling queue</p>
-        </div>
-        <div className="metric-card metric-card--green">
-          <div className="metric-card__top">
-            <p className="metric-card__label">Contacted Leads</p>
-            <CheckCircle className="h-5 w-5" />
-          </div>
-          <p className="metric-card__value">{stats?.contactedLeads ?? 0}</p>
-          <p className="metric-card__change">From current CRM status data</p>
-        </div>
-        <div className="metric-card metric-card--rose">
-          <div className="metric-card__top">
-            <p className="metric-card__label">Unassigned Queue</p>
-            <Voicemail className="h-5 w-5" />
-          </div>
-          <p className="metric-card__value">{unassignedQueueCount}</p>
-          <p className="metric-card__change">Needs manager assignment</p>
-        </div>
-        <div className="metric-card metric-card--amber">
-          <div className="metric-card__top">
-            <p className="metric-card__label">Call Records</p>
-            <Clock className="h-5 w-5" />
-          </div>
-          <p className="metric-card__value">{filteredRecords.length}</p>
-          <p className="metric-card__change">No fake history displayed</p>
-        </div>
-      </div>
-
-      <div className="card">
-        <div className="card-header">
-          <div>
-            <h2 className="card-title">Ready To Call</h2>
-            <p className="card-subtitle">Real leads from New, Follow-up, and Call Back status queues</p>
-          </div>
-          <span className="status-pill status-pill--blue">{callQueueLeads.length} leads</span>
-        </div>
-        <div className="card-body">
-          {callQueueLeads.length > 0 ? (
-            <div className="grid grid-cols-1 gap-3 xl:grid-cols-4">
-              {callQueueLeads.map((lead) => (
-                <Link
-                  key={lead._id}
-                  to={`/leads/${lead._id}`}
-                  className="rounded-lg border border-gray-200 bg-white p-4 transition hover:border-blue-300 hover:bg-blue-50/40"
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="truncate text-base font-extrabold text-gray-900">{lead.name}</p>
-                      <p className="truncate text-sm text-gray-500">{lead.phone}</p>
-                    </div>
-                    <span className="status-pill status-pill--amber">{lead.status}</span>
-                  </div>
-                  <div className="mt-4 grid grid-cols-2 gap-2 text-xs text-gray-500">
-                    <div>
-                      <p className="font-bold uppercase">Owner</p>
-                      <p className="truncate text-sm font-semibold normal-case text-gray-800">
-                        {lead.assignedToUser?.name || 'Unassigned'}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="font-bold uppercase">Source</p>
-                      <p className="truncate text-sm font-semibold normal-case text-gray-800">{lead.source}</p>
-                    </div>
-                  </div>
-                </Link>
-              ))}
-            </div>
-          ) : (
-            <div className="rounded-lg border border-dashed border-gray-300 bg-gray-50 p-8 text-center">
-              <Headphones className="mx-auto h-10 w-10 text-gray-300" />
-              <h3 className="mt-3 text-lg font-extrabold text-gray-900">No leads waiting in the calling queue</h3>
-              <p className="mt-1 text-sm text-gray-500">
-                Leads with New, Follow-up, or Call Back status will appear here automatically.
-              </p>
-            </div>
-          )}
-        </div>
-      </div>
-
       <div className="card">
         <div className="card-body">
-          <div className="grid grid-cols-1 gap-3 lg:grid-cols-[1fr_180px_180px_180px]">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
-              <input
-                type="search"
-                className="form-input pl-10"
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder="Search customer, phone, email, or agent"
-              />
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="inline-flex rounded-lg border border-gray-200 bg-gray-50 p-1">
+              <button
+                type="button"
+                className={`rounded-md px-4 py-2 text-sm font-extrabold transition ${
+                  activeView === 'live' ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-600 hover:text-gray-950'
+                }`}
+                onClick={() => setActiveView('live')}
+              >
+                Live Calling
+              </button>
+              <button
+                type="button"
+                className={`rounded-md px-4 py-2 text-sm font-extrabold transition ${
+                  activeView === 'history' ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-600 hover:text-gray-950'
+                }`}
+                onClick={() => setActiveView('history')}
+              >
+                Call History
+              </button>
             </div>
-            <select
-              value={statusFilter}
-              onChange={(event) => setStatusFilter(event.target.value as CallStatus | 'All')}
-              className="form-input"
-              aria-label="Call status"
-            >
-              <option value="All">All statuses</option>
-              <option value="Connected">Connected</option>
-              <option value="Missed">Missed</option>
-              <option value="Queued">Queued</option>
-              <option value="Voicemail">Voicemail</option>
-              <option value="In Progress">In Progress</option>
-            </select>
-            <select
-              value={directionFilter}
-              onChange={(event) => setDirectionFilter(event.target.value as CallDirection | 'All')}
-              className="form-input"
-              aria-label="Call direction"
-            >
-              <option value="All">All directions</option>
-              <option value="Incoming">Incoming</option>
-              <option value="Outgoing">Outgoing</option>
-            </select>
-            <select
-              value={outcomeFilter}
-              onChange={(event) => setOutcomeFilter(event.target.value as CallOutcome | 'All')}
-              className="form-input"
-              aria-label="Call outcome"
-            >
-              <option value="All">All outcomes</option>
-              <option value="Qualified">Qualified</option>
-              <option value="Follow-up">Follow-up</option>
-              <option value="Not Interested">Not Interested</option>
-              <option value="Wrong Number">Wrong Number</option>
-              <option value="Converted">Converted</option>
-              <option value="Pending">Pending</option>
-            </select>
+            <div className="text-sm font-semibold text-gray-500">
+              {zoomStatus?.configured ? 'Zoom Phone connected' : 'Configuration required'}
+            </div>
           </div>
         </div>
       </div>
 
-      <div className="split-grid">
-        <div className="card">
-          <div className="card-header">
+      {zoomError && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+          <div className="flex items-start gap-3">
+            <AlertCircle className="mt-0.5 h-5 w-5 flex-shrink-0" />
             <div>
-              <h2 className="card-title">Call History</h2>
-              <p className="card-subtitle">{filteredRecords.length} records in the current view</p>
+              <p className="font-extrabold">Zoom Phone notice</p>
+              <p className="mt-1">{zoomError}</p>
             </div>
-            <Filter className="h-5 w-5 text-gray-400" />
           </div>
-          <div className="overflow-x-auto">
-            <table className="table min-w-[980px]">
-              <thead>
-                <tr>
-                  <th>Customer</th>
-                  <th>Direction</th>
-                  <th>Status</th>
-                  <th>Duration</th>
-                  <th>Agent</th>
-                  <th>Outcome</th>
-                  <th>Started</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredRecords.map((record) => (
-                  <tr
-                    key={record.id}
-                    className={record.id === selectedRecord?.id ? 'bg-blue-50' : ''}
-                    onClick={() => {
-                      setSelectedId(record.id);
-                      setIsPlaying(false);
-                    }}
-                  >
-                    <td>
-                      <div>
-                        <p className="font-bold text-gray-900">{record.customerName}</p>
-                        <p className="text-xs text-gray-500">{record.phone}</p>
-                      </div>
-                    </td>
-                    <td>
-                      <span className={directionClass(record.direction)}>{record.direction}</span>
-                    </td>
-                    <td>
-                      <span className={statusClass(record.status)}>{record.status}</span>
-                    </td>
-                    <td>{formatDuration(record.durationSeconds)}</td>
-                    <td>{record.agent}</td>
-                    <td>
-                      <span className={outcomeClass(record.outcome)}>{record.outcome}</span>
-                    </td>
-                    <td>{new Date(record.startedAt).toLocaleString()}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          {filteredRecords.length === 0 && (
-            <div className="py-12 text-center">
-              <Mic className="mx-auto mb-3 h-10 w-10 text-gray-300" />
-              <h3 className="text-lg font-extrabold text-gray-900">No synced call history yet</h3>
-              <p className="mx-auto mt-1 max-w-md text-sm text-gray-500">
-                Real call records, recordings, durations, and dispositions will appear here after the phone service
-                exposes a call-history endpoint.
-              </p>
-            </div>
-          )}
         </div>
+      )}
 
-        {selectedRecord && (
+      {user?.role !== 'admin' && (
+        <div className="rounded-lg border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">
+          Account-wide Zoom Phone reporting is available to admins. Open a lead profile to view lead-specific calls and recordings.
+        </div>
+      )}
+
+      {analytics.recordings_error && activeView === 'history' && (
+        <div className="rounded-lg border border-amber-200 bg-white p-4 text-sm text-amber-800">
+          Call logs loaded, but Zoom Phone recordings could not be synced: {analytics.recordings_error}
+        </div>
+      )}
+
+      {activeView === 'live' && (
+        <>
+          <div className="metric-grid">
+            {liveCards.map((metric) => {
+              const Icon = metric.icon;
+              return (
+                <div key={metric.label} className={`metric-card ${metric.tone}`}>
+                  <div className="metric-card__top">
+                    <p className="metric-card__label">{metric.label}</p>
+                    <Icon className="h-5 w-5" />
+                  </div>
+                  <p className="metric-card__value">{loading ? '...' : metric.value}</p>
+                  <p className="metric-card__change">{metric.helper}</p>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="grid grid-cols-1 gap-5 xl:grid-cols-[1fr_420px]">
+            <div className="card">
+              <div className="card-header">
+                <div>
+                  <h2 className="card-title">Live Calling</h2>
+                  <p className="card-subtitle">Users currently on Zoom Phone calls and the number/account in use</p>
+                </div>
+                <span className="status-pill status-pill--blue">{liveStatus.active_calls.length} active</span>
+              </div>
+              <div className="card-body">
+                {loading ? (
+                  <div className="space-y-3">
+                    <div className="skeleton h-20" />
+                    <div className="skeleton h-20" />
+                  </div>
+                ) : liveStatus.active_calls.length > 0 ? (
+                  <div className="space-y-3">
+                    {liveStatus.active_calls.map((call) => (
+                      <div key={call.call_id || `${call.date_time}-${getMetricPartyText(call)}`} className="rounded-lg border border-blue-200 bg-blue-50/60 p-4">
+                        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                          <div>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className={statusClass('on_call')}>On call</span>
+                              <span className={directionClass(call.direction || 'Unknown')}>{call.direction || 'Unknown'}</span>
+                            </div>
+                            <h3 className="mt-3 text-lg font-extrabold text-gray-950">{getMetricCallAgent(call)}</h3>
+                            <p className="mt-1 text-sm text-gray-600">{getMetricPartyText(call)}</p>
+                            <p className="mt-1 text-sm text-gray-500">Started {formatDateTime(call.date_time)}</p>
+                          </div>
+                          <div className="rounded-lg border border-blue-200 bg-white p-3 text-sm">
+                            <p className="text-xs font-bold uppercase text-gray-500">Zoom number/account</p>
+                            <p className="mt-1 font-extrabold text-gray-950">{call.zoom_account || 'Not returned by Zoom'}</p>
+                            <p className="mt-1 text-gray-500">Connected with {call.connected_number || 'unknown number'}</p>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="lead-empty-state">
+                    <Headphones className="h-10 w-10" />
+                    <h3>No live calls right now</h3>
+                    <p>When Zoom reports an active or ringing phone call, the user and Zoom number will appear here.</p>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="card">
+              <div className="card-header">
+                <div>
+                  <h2 className="card-title">Phone Users</h2>
+                  <p className="card-subtitle">CRM user match, extension, number, and availability</p>
+                </div>
+              </div>
+              <div className="card-body space-y-3">
+                {liveStatus.phone_users.length > 0 ? (
+                  liveStatus.phone_users.map((phoneUser) => (
+                    <div key={phoneUser.id || phoneUser.phone_user_id || phoneUser.email} className="rounded-lg border border-gray-200 p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="truncate font-extrabold text-gray-950">
+                            {phoneUser.matched_user?.name || phoneUser.name || phoneUser.email || 'Zoom user'}
+                          </p>
+                          <p className="mt-1 truncate text-sm text-gray-500">
+                            {phoneUser.matched_user?.email || phoneUser.email || 'No email returned'}
+                          </p>
+                        </div>
+                        <span className={statusClass(phoneUser.live_status)}>{phoneUser.live_status === 'on_call' ? 'On call' : 'Available'}</span>
+                      </div>
+                      <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
+                        <div>
+                          <p className="font-bold uppercase text-gray-400">Extension</p>
+                          <p className="font-semibold text-gray-800">{phoneUser.extension_number || 'N/A'}</p>
+                        </div>
+                        <div>
+                          <p className="font-bold uppercase text-gray-400">Zoom Number</p>
+                          <p className="font-semibold text-gray-800">{phoneUser.connected_numbers.join(', ') || 'Not assigned'}</p>
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <p className="text-sm text-gray-500">No Zoom Phone users returned for this account.</p>
+                )}
+              </div>
+            </div>
+          </div>
+
           <div className="card">
             <div className="card-header">
               <div>
-                <h2 className="card-title">Call Details</h2>
-                <p className="card-subtitle">{selectedRecord.id}</p>
+                <h2 className="card-title">Zoom Phone Numbers</h2>
+                <p className="card-subtitle">Assigned numbers, current inventory status, and capability</p>
               </div>
-              <span className={statusClass(selectedRecord.status)}>{selectedRecord.status}</span>
+              <span className="status-pill status-pill--blue">
+                {liveInventorySummary.total_numbers} numbers / {liveInventorySummary.total_users} users
+              </span>
             </div>
-            <div className="card-body space-y-5">
-              <div className="flex items-start gap-3">
-                <span className="avatar">
-                  <UserRound className="h-4 w-4" />
-                </span>
-                <div className="min-w-0">
-                  <p className="text-lg font-extrabold text-gray-900">{selectedRecord.customerName}</p>
-                  <p className="text-sm text-gray-500">{selectedRecord.email}</p>
-                  <p className="text-sm font-semibold text-gray-700">{selectedRecord.phone}</p>
-                </div>
-              </div>
+            <div className="overflow-x-auto">
+              <table className="table min-w-[760px]">
+                <thead>
+                  <tr>
+                    <th>Number</th>
+                    <th>Status</th>
+                    <th>Assigned To</th>
+                    <th>Capability</th>
+                    <th>Source</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {liveInventory.phone_numbers.map((phoneNumber) => (
+                    <tr key={phoneNumber.id || phoneNumber.number}>
+                      <td>
+                        <p className="font-bold text-gray-900">{phoneNumber.display_number || phoneNumber.number || 'Unknown number'}</p>
+                        <p className="text-xs text-gray-500">{phoneNumber.location || phoneNumber.site?.name || 'Default site'}</p>
+                      </td>
+                      <td>
+                        <span className={statusClass(phoneNumber.status || 'Unknown')}>{phoneNumber.status || 'Unknown'}</span>
+                      </td>
+                      <td>
+                        <p className="font-semibold text-gray-800">{phoneNumber.assignee?.name || 'Unassigned'}</p>
+                        <p className="text-xs text-gray-500">{phoneNumber.assignee?.extension_number || phoneNumber.assignee?.extension_type || ''}</p>
+                      </td>
+                      <td>
+                        <div className="flex flex-wrap gap-1">
+                          {(phoneNumber.capability || []).length > 0 ? (
+                            phoneNumber.capability?.map((capability) => (
+                              <span key={capability} className="status-pill status-pill--slate">
+                                {capability}
+                              </span>
+                            ))
+                          ) : (
+                            <span className="text-sm text-gray-500">Not returned</span>
+                          )}
+                        </div>
+                      </td>
+                      <td>{phoneNumber.source || 'Zoom Phone'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {!loading && liveInventory.phone_numbers.length === 0 && (
+                <div className="p-8 text-center text-sm text-gray-500">No Zoom Phone numbers returned for this account.</div>
+              )}
+            </div>
+          </div>
+        </>
+      )}
 
-              <div className="grid grid-cols-2 gap-3">
-                <div className="rounded-lg border border-gray-200 p-3">
-                  <p className="text-xs font-bold uppercase text-gray-500">Assigned Agent</p>
-                  <p className="mt-1 font-bold text-gray-900">{selectedRecord.agent}</p>
+      {activeView === 'history' && (
+        <>
+          <div className="card">
+            <div className="card-body">
+              <div className="grid grid-cols-1 gap-3 xl:grid-cols-[150px_150px_1fr_220px_200px_200px]">
+                <label className="space-y-1">
+                  <span className="text-xs font-bold uppercase text-gray-500">From</span>
+                  <input
+                    type="date"
+                    className="form-input"
+                    value={fromDate}
+                    max={toDate}
+                    onChange={(event) => setFromDate(event.target.value)}
+                  />
+                </label>
+                <label className="space-y-1">
+                  <span className="text-xs font-bold uppercase text-gray-500">To</span>
+                  <input
+                    type="date"
+                    className="form-input"
+                    value={toDate}
+                    min={fromDate}
+                    onChange={(event) => setToDate(event.target.value)}
+                  />
+                </label>
+                <div className="relative self-end">
+                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+                  <input
+                    type="search"
+                    className="form-input pl-10"
+                    value={query}
+                    onChange={(event) => setQuery(event.target.value)}
+                    placeholder="Search lead name, phone, email, agent, result, or site"
+                  />
                 </div>
-                <div className="rounded-lg border border-gray-200 p-3">
-                  <p className="text-xs font-bold uppercase text-gray-500">Duration</p>
-                  <p className="mt-1 font-bold text-gray-900">{formatDuration(selectedRecord.durationSeconds)}</p>
-                </div>
-                <div className="rounded-lg border border-gray-200 p-3">
-                  <p className="text-xs font-bold uppercase text-gray-500">Disposition</p>
-                  <p className="mt-1 font-bold text-gray-900">{selectedRecord.disposition}</p>
-                </div>
-                <div className="rounded-lg border border-gray-200 p-3">
-                  <p className="text-xs font-bold uppercase text-gray-500">Queue</p>
-                  <p className="mt-1 font-bold text-gray-900">{selectedRecord.queue}</p>
-                </div>
+                <select value={userFilter} onChange={(event) => setUserFilter(event.target.value)} className="form-input self-end" aria-label="Filter by user">
+                  <option value="All">All users</option>
+                  {userOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+                <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="form-input self-end" aria-label="Call status">
+                  <option value="All">All statuses</option>
+                  {availableStatuses.map((status) => (
+                    <option key={status} value={status}>
+                      {status}
+                    </option>
+                  ))}
+                </select>
+                <select value={directionFilter} onChange={(event) => setDirectionFilter(event.target.value)} className="form-input self-end" aria-label="Call direction">
+                  <option value="All">All directions</option>
+                  {availableDirections.map((direction) => (
+                    <option key={direction} value={direction}>
+                      {direction}
+                    </option>
+                  ))}
+                </select>
               </div>
+            </div>
+          </div>
 
-              <div>
-                <p className="mb-2 flex items-center gap-2 text-sm font-bold text-gray-900">
-                  <Mic className="h-4 w-4" />
-                  Recording Playback
-                </p>
-                <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
-                  <div className="flex items-center gap-3">
-                    <button
-                      type="button"
-                      className="icon-button"
-                      onClick={() => setIsPlaying((current) => !current)}
-                      disabled={!selectedRecord.recordingUrl}
-                      title={selectedRecord.recordingUrl ? 'Toggle playback' : 'Recording unavailable'}
-                    >
-                      {isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
-                    </button>
-                    <div className="flex-1">
-                      <div className="progress-bar">
-                        <div
-                          className="progress-bar__fill text-blue-600"
-                          style={{ width: selectedRecord.recordingUrl ? (isPlaying ? '62%' : '28%') : '0%' }}
-                        />
-                      </div>
-                      <p className="mt-2 text-xs text-gray-500">
-                        {selectedRecord.recordingUrl ? 'Recording metadata ready' : 'No recording attached'}
+          <div className="metric-grid">
+            {historyCards.map((metric) => {
+              const Icon = metric.icon;
+              return (
+                <div key={metric.label} className={`metric-card ${metric.tone}`}>
+                  <div className="metric-card__top">
+                    <p className="metric-card__label">{metric.label}</p>
+                    <Icon className="h-5 w-5" />
+                  </div>
+                  <p className="metric-card__value">{loading ? '...' : metric.value}</p>
+                  <p className="metric-card__change">{metric.helper}</p>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="split-grid">
+            <div className="card">
+              <div className="card-header">
+                <div>
+                  <h2 className="card-title">Call History</h2>
+                  <p className="card-subtitle">
+                    {filteredCalls.length} records from {fromDate} to {toDate}
+                  </p>
+                </div>
+                <span className="status-pill status-pill--slate">{analytics.total_records_scanned} synced</span>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="table min-w-[980px]">
+                  <thead>
+                    <tr>
+                      <th>Lead / Number</th>
+                      <th>Direction</th>
+                      <th>Status</th>
+                      <th>Duration</th>
+                      <th>User</th>
+                      <th>Recording</th>
+                      <th>Started</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredCalls.map((call) => {
+                      const callKey = getCallKey(call);
+                      return (
+                        <tr
+                          key={callKey}
+                          className={selectedCall && callKey === getCallKey(selectedCall) ? 'bg-blue-50' : ''}
+                          onClick={() => {
+                            setSelectedId(callKey);
+                            resetAudio();
+                          }}
+                        >
+                          <td>
+                            <div>
+                              <p className="font-bold text-gray-900">{getCallName(call)}</p>
+                              <p className="text-xs text-gray-500">{getCallPhone(call)}</p>
+                              {call.matched_lead?.email && <p className="text-xs text-gray-400">{call.matched_lead.email}</p>}
+                            </div>
+                          </td>
+                          <td>
+                            <span className={directionClass(getCallDirection(call))}>{getCallDirection(call)}</span>
+                          </td>
+                          <td>
+                            <span className={statusClass(getCallStatus(call))}>{getCallStatus(call)}</span>
+                          </td>
+                          <td>{formatDuration(call.duration || 0)}</td>
+                          <td>
+                            <p className="font-semibold text-gray-800">{getCallAgent(call)}</p>
+                            {call.matched_user?.email && <p className="text-xs text-gray-500">{call.matched_user.email}</p>}
+                          </td>
+                          <td>
+                            {call.has_recording ? (
+                              <span className="status-pill status-pill--green">
+                                {call.recording_count || 1} file{(call.recording_count || 1) === 1 ? '' : 's'}
+                              </span>
+                            ) : (
+                              <span className="status-pill status-pill--slate">None</span>
+                            )}
+                          </td>
+                          <td>{formatDateTime(getCallStartedAt(call))}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              {!loading && filteredCalls.length === 0 && (
+                <div className="py-12 text-center">
+                  <Mic className="mx-auto mb-3 h-10 w-10 text-gray-300" />
+                  <h3 className="text-lg font-extrabold text-gray-900">No Zoom Phone calls found</h3>
+                  <p className="mx-auto mt-1 max-w-md text-sm text-gray-500">
+                    Adjust the date range, user filter, or search text to find matching calls.
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {selectedCall && (
+              <div className="card">
+                <div className="card-header">
+                  <div>
+                    <h2 className="card-title">Call Details</h2>
+                    <p className="card-subtitle">{selectedCall.id || selectedCall.call_id || 'Zoom Phone call'}</p>
+                  </div>
+                  <span className={statusClass(getCallStatus(selectedCall))}>{getCallStatus(selectedCall)}</span>
+                </div>
+                <div className="card-body space-y-5">
+                  <div className="flex items-start gap-3">
+                    <span className="avatar">
+                      <UserRound className="h-4 w-4" />
+                    </span>
+                    <div className="min-w-0">
+                      <p className="text-lg font-extrabold text-gray-900">{getCallName(selectedCall)}</p>
+                      <p className="text-sm font-semibold text-gray-700">{getCallPhone(selectedCall)}</p>
+                      <p className="text-sm text-gray-500">
+                        {selectedCall.caller_number || 'Unknown caller'} to {selectedCall.callee_number || 'Unknown recipient'}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="rounded-lg border border-gray-200 p-3">
+                      <p className="text-xs font-bold uppercase text-gray-500">User</p>
+                      <p className="mt-1 font-bold text-gray-900">{getCallAgent(selectedCall)}</p>
+                    </div>
+                    <div className="rounded-lg border border-gray-200 p-3">
+                      <p className="text-xs font-bold uppercase text-gray-500">Duration</p>
+                      <p className="mt-1 font-bold text-gray-900">{formatDuration(selectedCall.duration || 0)}</p>
+                    </div>
+                    <div className="rounded-lg border border-gray-200 p-3">
+                      <p className="text-xs font-bold uppercase text-gray-500">Extension</p>
+                      <p className="mt-1 font-bold text-gray-900">{selectedCall.owner?.extension_number || 'Not available'}</p>
+                    </div>
+                    <div className="rounded-lg border border-gray-200 p-3">
+                      <p className="text-xs font-bold uppercase text-gray-500">Site</p>
+                      <p className="mt-1 font-bold text-gray-900">{selectedCall.site?.name || 'Default'}</p>
+                    </div>
+                  </div>
+
+                  <div>
+                    <p className="mb-2 flex items-center gap-2 text-sm font-bold text-gray-900">
+                      <Mic className="h-4 w-4" />
+                      Recording
+                    </p>
+                    <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                      {selectedCall.has_recording || selectedCall.recording_download_url || selectedCall.recording_id ? (
+                        <div className="space-y-3">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <button type="button" className="btn btn-secondary" onClick={() => loadRecording(selectedCall)} disabled={recordingLoading}>
+                              <Play className="h-4 w-4" />
+                              {recordingLoading ? 'Loading' : 'Load Audio'}
+                            </button>
+                            <button type="button" className="btn btn-secondary" onClick={() => downloadRecording(selectedCall)} disabled={recordingLoading}>
+                              <Download className="h-4 w-4" />
+                              Download
+                            </button>
+                          </div>
+                          {audioUrl && audioCallId === getCallKey(selectedCall) && (
+                            <audio controls className="w-full" src={audioUrl}>
+                              <track kind="captions" />
+                            </audio>
+                          )}
+                        </div>
+                      ) : (
+                        <p className="text-sm text-gray-500">No recording metadata returned for this call.</p>
+                      )}
+                    </div>
+                  </div>
+
+                  <div>
+                    <p className="mb-2 text-sm font-bold text-gray-900">Zoom Phone Metadata</p>
+                    <div className="space-y-2 rounded-lg border border-gray-200 bg-white p-3 text-sm text-gray-600">
+                      <p>
+                        <strong className="text-gray-900">Result:</strong> {selectedCall.result || 'Not available'}
+                      </p>
+                      <p>
+                        <strong className="text-gray-900">Path:</strong> {selectedCall.path || 'Not available'}
+                      </p>
+                      <p>
+                        <strong className="text-gray-900">Started:</strong> {formatDateTime(getCallStartedAt(selectedCall))}
+                      </p>
+                      <p>
+                        <strong className="text-gray-900">Ended:</strong> {formatDateTime(selectedCall.call_end_time)}
                       </p>
                     </div>
                   </div>
                 </div>
               </div>
-
-              <div>
-                <p className="mb-2 flex items-center gap-2 text-sm font-bold text-gray-900">
-                  <FileText className="h-4 w-4" />
-                  Notes
-                </p>
-                <p className="rounded-lg border border-gray-200 bg-white p-3 text-sm text-gray-600">
-                  {selectedRecord.notes}
-                </p>
-              </div>
-
-              <div>
-                <p className="mb-2 flex items-center gap-2 text-sm font-bold text-gray-900">
-                  <Tag className="h-4 w-4" />
-                  Tags
-                </p>
-                <div className="flex flex-wrap gap-2">
-                  {selectedRecord.tags.map((tag) => (
-                    <span key={tag} className="status-pill status-pill--slate">
-                      {tag}
-                    </span>
-                  ))}
-                </div>
-              </div>
-
-              {selectedRecord.followUpAt && (
-                <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
-                  <p className="flex items-center gap-2 text-sm font-bold text-amber-900">
-                    <CalendarClock className="h-4 w-4" />
-                    Follow-up
-                  </p>
-                  <p className="mt-1 text-sm text-amber-800">
-                    {new Date(selectedRecord.followUpAt).toLocaleString()}
-                  </p>
-                </div>
-              )}
-            </div>
+            )}
           </div>
-        )}
-      </div>
 
-      {selectedRecord && (
-        <div className="card">
-          <div className="card-header">
-            <div>
-              <h2 className="card-title">Call Timeline</h2>
-              <p className="card-subtitle">Enterprise call workflow events</p>
+          <div className="card">
+            <div className="card-header">
+              <div>
+                <h2 className="card-title">Call Recordings</h2>
+                <p className="card-subtitle">{filteredRecordings.length} recording files match the current filters</p>
+              </div>
+              <span className="status-pill status-pill--green">{analytics.recordings.length} synced</span>
             </div>
+            <div className="overflow-x-auto">
+              <table className="table min-w-[980px]">
+                <thead>
+                  <tr>
+                    <th>Lead / Number</th>
+                    <th>Direction</th>
+                    <th>Duration</th>
+                    <th>User</th>
+                    <th>Type</th>
+                    <th>Recorded At</th>
+                    <th>Audio</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredRecordings.map((recording) => {
+                    const recordingKey = getRecordingKey(recording);
+                    return (
+                      <tr key={recordingKey}>
+                        <td>
+                          <p className="font-bold text-gray-900">{getRecordingName(recording)}</p>
+                          <p className="text-xs text-gray-500">{getRecordingPhone(recording)}</p>
+                          {recording.matched_lead?.email && <p className="text-xs text-gray-400">{recording.matched_lead.email}</p>}
+                        </td>
+                        <td>
+                          <span className={directionClass(recording.direction || 'Unknown')}>{recording.direction || 'Unknown'}</span>
+                        </td>
+                        <td>{formatDuration(recording.duration || 0)}</td>
+                        <td>
+                          <p className="font-semibold text-gray-800">{getRecordingOwner(recording)}</p>
+                          {recording.matched_user?.email && <p className="text-xs text-gray-500">{recording.matched_user.email}</p>}
+                        </td>
+                        <td>{recording.recording_type || 'Recording'}</td>
+                        <td>{formatDateTime(recording.date_time || recording.end_time)}</td>
+                        <td>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <button type="button" className="btn btn-secondary" onClick={() => loadRecordingItem(recording)} disabled={recordingLoading}>
+                              <Play className="h-4 w-4" />
+                              Play
+                            </button>
+                            <button type="button" className="btn btn-secondary" onClick={() => downloadRecordingItem(recording)} disabled={recordingLoading}>
+                              <Download className="h-4 w-4" />
+                              Download
+                            </button>
+                          </div>
+                          {audioUrl && audioCallId === recordingKey && (
+                            <audio controls className="mt-3 w-full min-w-[220px]" src={audioUrl}>
+                              <track kind="captions" />
+                            </audio>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            {!loading && filteredRecordings.length === 0 && (
+              <div className="p-8 text-center text-sm text-gray-500">No recordings match the current filters.</div>
+            )}
           </div>
-          <div className="card-body">
-            <div className="timeline">
-              <div className="timeline-item">
-                <span className="timeline-dot">
-                  <PhoneCall className="h-4 w-4" />
-                </span>
+
+          <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
+            <div className="card">
+              <div className="card-header">
                 <div>
-                  <p className="font-bold text-gray-900">Call started</p>
-                  <p className="text-sm text-gray-500">{new Date(selectedRecord.startedAt).toLocaleString()}</p>
+                  <h2 className="card-title">User Performance</h2>
+                  <p className="card-subtitle">Calls, recordings, talk time, and answer rate by matched user</p>
                 </div>
               </div>
-              <div className="timeline-item">
-                <span className="timeline-dot">
-                  <Headphones className="h-4 w-4" />
-                </span>
-                <div>
-                  <p className="font-bold text-gray-900">Assigned to {selectedRecord.agent}</p>
-                  <p className="text-sm text-gray-500">{selectedRecord.queue} queue</p>
-                </div>
-              </div>
-              <div className="timeline-item">
-                <span className="timeline-dot">
-                  <FileText className="h-4 w-4" />
-                </span>
-                <div>
-                  <p className="font-bold text-gray-900">Disposition recorded</p>
-                  <p className="text-sm text-gray-500">
-                    {selectedRecord.disposition} - {selectedRecord.outcome}
-                  </p>
-                </div>
-              </div>
-              {selectedRecord.followUpAt && (
-                <div className="timeline-item">
-                  <span className="timeline-dot">
-                    <CalendarClock className="h-4 w-4" />
-                  </span>
-                  <div>
-                    <p className="font-bold text-gray-900">Follow-up scheduled</p>
-                    <p className="text-sm text-gray-500">{new Date(selectedRecord.followUpAt).toLocaleString()}</p>
+              <div className="card-body space-y-3">
+                {analytics.agent_stats.map((agent) => (
+                  <div key={agent.agent} className="rounded-lg border border-gray-200 p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="font-extrabold text-gray-950">{agent.agent}</p>
+                        <p className="text-sm text-gray-500">
+                          {agent.extension_number ? `Ext ${agent.extension_number}` : agent.phone_number || 'Zoom Phone'}
+                        </p>
+                      </div>
+                      <span className="status-pill status-pill--blue">{agent.total_calls} calls</span>
+                    </div>
+                    <div className="mt-4 grid grid-cols-4 gap-3 text-sm">
+                      <div>
+                        <p className="font-bold text-gray-900">{agent.connected_calls}</p>
+                        <p className="text-gray-500">Connected</p>
+                      </div>
+                      <div>
+                        <p className="font-bold text-gray-900">{agent.missed_calls}</p>
+                        <p className="text-gray-500">Missed</p>
+                      </div>
+                      <div>
+                        <p className="font-bold text-gray-900">{formatDuration(agent.average_call_duration)}</p>
+                        <p className="text-gray-500">Avg</p>
+                      </div>
+                      <div>
+                        <p className="font-bold text-gray-900">{agent.answer_rate}%</p>
+                        <p className="text-gray-500">Answer</p>
+                      </div>
+                    </div>
                   </div>
+                ))}
+                {analytics.agent_stats.length === 0 && <p className="text-sm text-gray-500">No user performance records in this range.</p>}
+              </div>
+            </div>
+
+            <div className="card">
+              <div className="card-header">
+                <div>
+                  <h2 className="card-title">Daily Trend</h2>
+                  <p className="card-subtitle">Call movement in the selected date range</p>
                 </div>
-              )}
+              </div>
+              <div className="card-body space-y-3">
+                {analytics.daily_stats.map((day) => (
+                  <div key={day.date} className="rounded-lg border border-gray-200 p-4">
+                    <div className="flex items-center justify-between">
+                      <p className="font-extrabold text-gray-950">{day.date}</p>
+                      <span className="status-pill status-pill--slate">{day.total_calls} calls</span>
+                    </div>
+                    <div className="mt-3 h-2 overflow-hidden rounded-full bg-gray-100">
+                      <div
+                        className="h-full rounded-full bg-blue-600"
+                        style={{ width: `${summary.total_calls ? Math.min((day.total_calls / summary.total_calls) * 100, 100) : 0}%` }}
+                      />
+                    </div>
+                    <div className="mt-3 grid grid-cols-4 gap-3 text-xs text-gray-500">
+                      <span>{day.incoming_calls} incoming</span>
+                      <span>{day.outgoing_calls} outgoing</span>
+                      <span>{day.connected_calls} connected</span>
+                      <span>{day.recorded_calls} recorded</span>
+                    </div>
+                  </div>
+                ))}
+                {analytics.daily_stats.length === 0 && <p className="text-sm text-gray-500">No daily trend records in this range.</p>}
+              </div>
             </div>
           </div>
-        </div>
+        </>
       )}
     </div>
   );

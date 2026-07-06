@@ -296,9 +296,9 @@ const Dashboard: React.FC = () => {
         <div>
           <div className="page-header__eyebrow">
             <Headphones className="h-4 w-4" />
-            Phone Calling Command Center
+            Brit Institute CRM
           </div>
-          <h1 className="page-title">Call Center CRM Dashboard</h1>
+          <h1 className="page-title">Brit Institute Dashboard</h1>
           <p className="page-description">
             Monitor lead movement, owner coverage, CRM outcomes, and phone-calling readiness from one operational view.
             Daily mode shows leads updated today.
@@ -439,7 +439,7 @@ const Dashboard: React.FC = () => {
               <thead>
                 <tr>
                   <th>Agent</th>
-                  <th>Assigned Leads</th>
+                  <th>Owned Leads</th>
                   <th>Sales Done</th>
                   <th>Conversion</th>
                   <th>Status</th>
