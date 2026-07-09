@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertCircle,
   BarChart3,
@@ -296,7 +296,9 @@ const getHistoryUserEmail = (item: UnifiedCallHistoryItem) => item.call?.matched
 
 const getHistoryRecordingCount = (item: UnifiedCallHistoryItem) => {
   if (item.recordings.length > 0) return item.recordings.length;
-  if (item.call?.has_recording || item.call?.recording_download_url || item.call?.recording_id) return item.call.recording_count || 1;
+  if (item.call?.has_recording || item.call?.recording_download_url || item.call?.recording_id) {
+    return item.call.recording_count || 1;
+  }
   return 0;
 };
 
@@ -333,6 +335,10 @@ const Calls: React.FC = () => {
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [audioCallId, setAudioCallId] = useState<string | null>(null);
   const [recordingLoading, setRecordingLoading] = useState(false);
+  const [audioLoadProgress, setAudioLoadProgress] = useState(0);
+  const [audioLoadStatus, setAudioLoadStatus] = useState('');
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const recordingPanelRef = useRef<HTMLDivElement | null>(null);
   const debouncedQuery = useDebouncedValue(query, 220);
 
   const setActiveView = (view: 'live' | 'history') => {
@@ -590,55 +596,110 @@ const Calls: React.FC = () => {
   const unassignedQueueCount = callQueueLeads.filter((lead) => !lead.assignedTo && !lead.assignedToUser).length;
 
   const resetAudio = () => {
-    if (audioUrl) URL.revokeObjectURL(audioUrl);
     setAudioUrl(null);
     setAudioCallId(null);
+    setAudioLoadProgress(0);
+    setAudioLoadStatus('');
+    setRecordingLoading(false);
+  };
+
+  const scrollToRecordingPanel = () => {
+    window.setTimeout(() => {
+      recordingPanelRef.current?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'center'
+      });
+    }, 80);
   };
 
   const loadRecordingFile = async (recordingId: string, recordingKey: string, downloadUrl?: string) => {
     if (!recordingId) return;
-    if (audioUrl && audioCallId === recordingKey) return;
+    if (audioUrl && audioCallId === recordingKey) {
+      scrollToRecordingPanel();
+      audioRef.current?.play().catch(() => {
+        setAudioLoadStatus('Press play on the audio control to start playback');
+      });
+      return;
+    }
 
     setRecordingLoading(true);
+    setAudioLoadProgress(8);
+    setAudioLoadStatus('Preparing secure Zoom stream...');
     try {
-      const blob = await zoomPhoneApi.downloadAccountRecordingAudio(recordingId, { downloadUrl });
+      const url = zoomPhoneApi.getRecordingAudioUrl(recordingId, { downloadUrl });
       resetAudio();
-      setAudioUrl(URL.createObjectURL(blob));
+      setRecordingLoading(true);
+      setAudioLoadProgress(18);
+      setAudioLoadStatus('Connecting to audio player...');
+      scrollToRecordingPanel();
+
+      setAudioUrl(url);
       setAudioCallId(recordingKey);
+
+      if (audioRef.current) {
+        audioRef.current.src = url;
+        audioRef.current.load();
+        setAudioLoadProgress(36);
+        setAudioLoadStatus('Starting playback...');
+        await audioRef.current.play();
+      }
     } catch (error) {
       setZoomError(error instanceof Error ? error.message : 'Unable to load this Zoom Phone recording');
-    } finally {
+      setAudioLoadStatus('Unable to load recording');
       setRecordingLoading(false);
     }
   };
 
-  const loadHistoryRecording = async (item: UnifiedCallHistoryItem) => {
+  const updateBufferedProgress = (audio: HTMLAudioElement) => {
+    if (!Number.isFinite(audio.duration) || audio.duration <= 0 || audio.buffered.length === 0) return;
+
+    const bufferedEnd = audio.buffered.end(audio.buffered.length - 1);
+    const bufferedPercent = Math.min(99, Math.max(20, Math.round((bufferedEnd / audio.duration) * 100)));
+    setAudioLoadProgress(bufferedPercent);
+    setAudioLoadStatus(`Buffering ${bufferedPercent}%`);
+  };
+
+  const getHistoryRecordingTarget = (item: UnifiedCallHistoryItem) => {
     const recording = getHistoryPrimaryRecording(item);
     if (recording) {
-      await loadRecordingFile(getRecordingKey(recording), item.id, recording.download_url || recording.file_url);
-      return;
+      return {
+        id: getRecordingKey(recording),
+        downloadUrl: recording.download_url || recording.file_url
+      };
     }
 
-    if (!item.call?.has_recording && !item.call?.recording_download_url && !item.call?.recording_id) return;
-    await loadRecordingFile(getCallRecordingId(item.call), item.id, item.call.recording_download_url);
+    if (item.call?.has_recording || item.call?.recording_download_url || item.call?.recording_id) {
+      return {
+        id: getCallRecordingId(item.call),
+        downloadUrl: item.call.recording_download_url
+      };
+    }
+
+    return null;
+  };
+
+  const loadHistoryRecording = async (item: UnifiedCallHistoryItem) => {
+    const target = getHistoryRecordingTarget(item);
+    if (!target) return;
+    await loadRecordingFile(target.id, item.id, target.downloadUrl);
   };
 
   const downloadHistoryRecording = async (item: UnifiedCallHistoryItem) => {
-    const recording = getHistoryPrimaryRecording(item);
-    const recordingId = recording ? getRecordingKey(recording) : item.call ? getCallRecordingId(item.call) : '';
-    if (!recordingId) return;
+    const target = getHistoryRecordingTarget(item);
+    if (!target) return;
 
     setRecordingLoading(true);
     try {
-      const blob = await zoomPhoneApi.downloadAccountRecordingAudio(recordingId, {
-        downloadUrl: recording?.download_url || recording?.file_url || item.call?.recording_download_url
+      const url = zoomPhoneApi.getRecordingAudioUrl(target.id, {
+        downloadUrl: target.downloadUrl,
+        disposition: 'attachment'
       });
-      const url = URL.createObjectURL(blob);
       const anchor = document.createElement('a');
       anchor.href = url;
-      anchor.download = `zoom-phone-recording-${recordingId}.mp3`;
+      anchor.download = `zoom-phone-recording-${target.id}.mp3`;
+      document.body.appendChild(anchor);
       anchor.click();
-      URL.revokeObjectURL(url);
+      document.body.removeChild(anchor);
     } catch (error) {
       setZoomError(error instanceof Error ? error.message : 'Unable to download this Zoom Phone recording');
     } finally {
@@ -1061,13 +1122,13 @@ const Calls: React.FC = () => {
                 <div>
                   <h2 className="card-title">Call History</h2>
                   <p className="card-subtitle">
-                    {filteredCalls.length} records from {fromDate} to {toDate}
+                    {filteredHistory.length} calls and recordings from {fromDate} to {toDate}
                   </p>
                 </div>
-                <span className="status-pill status-pill--slate">{analytics.total_records_scanned} synced</span>
+                <span className="status-pill status-pill--slate">{unifiedHistory.length} synced</span>
               </div>
               <div className="overflow-x-auto">
-                <table className="table min-w-[980px]">
+                <table className="table min-w-[820px]">
                   <thead>
                     <tr>
                       <th>Lead / Number</th>
@@ -1076,74 +1137,80 @@ const Calls: React.FC = () => {
                       <th>Duration</th>
                       <th>User</th>
                       <th>Recording</th>
-                      <th>Started</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredCalls.map((call) => {
-                      const callKey = getCallKey(call);
+                    {filteredHistory.map((item) => {
+                      const recordingCount = getHistoryRecordingCount(item);
                       return (
                         <tr
-                          key={callKey}
-                          className={selectedCall && callKey === getCallKey(selectedCall) ? 'bg-blue-50' : ''}
+                          key={item.id}
+                          className={selectedHistoryItem?.id === item.id ? 'bg-blue-50' : ''}
                           onClick={() => {
-                            setSelectedId(callKey);
+                            setSelectedId(item.id);
                             resetAudio();
+                            if (getHistoryRecordingCount(item) > 0) {
+                              scrollToRecordingPanel();
+                            }
                           }}
                         >
                           <td>
                             <div>
-                              <p className="font-bold text-gray-900">{getCallName(call)}</p>
-                              <p className="text-xs text-gray-500">{getCallPhone(call)}</p>
-                              {call.matched_lead?.email && <p className="text-xs text-gray-400">{call.matched_lead.email}</p>}
+                              <p className="font-bold text-gray-900">{getHistoryName(item)}</p>
+                              <p className="text-xs text-gray-500">{getHistoryPhone(item)}</p>
+                              {getHistoryLeadEmail(item) && <p className="text-xs text-gray-400">{getHistoryLeadEmail(item)}</p>}
                             </div>
                           </td>
                           <td>
-                            <span className={directionClass(getCallDirection(call))}>{getCallDirection(call)}</span>
+                            <span className={directionClass(getHistoryDirection(item))}>{getHistoryDirection(item)}</span>
                           </td>
                           <td>
-                            <span className={statusClass(getCallStatus(call))}>{getCallStatus(call)}</span>
+                            <span className={statusClass(getHistoryStatus(item))}>{getHistoryStatus(item)}</span>
                           </td>
-                          <td>{formatDuration(call.duration || 0)}</td>
+                          <td>{formatDuration(getHistoryDuration(item))}</td>
                           <td>
-                            <p className="font-semibold text-gray-800">{getCallAgent(call)}</p>
-                            {call.matched_user?.email && <p className="text-xs text-gray-500">{call.matched_user.email}</p>}
+                            <p className="font-semibold text-gray-800">{getHistoryAgent(item)}</p>
+                            {getHistoryUserEmail(item) && <p className="text-xs text-gray-500">{getHistoryUserEmail(item)}</p>}
                           </td>
                           <td>
-                            {call.has_recording ? (
+                            {recordingCount > 0 ? (
                               <span className="status-pill status-pill--green">
-                                {call.recording_count || 1} file{(call.recording_count || 1) === 1 ? '' : 's'}
+                                {recordingCount} file{recordingCount === 1 ? '' : 's'}
                               </span>
                             ) : (
                               <span className="status-pill status-pill--slate">None</span>
                             )}
                           </td>
-                          <td>{formatDateTime(getCallStartedAt(call))}</td>
                         </tr>
                       );
                     })}
                   </tbody>
                 </table>
               </div>
-              {!loading && filteredCalls.length === 0 && (
+              {!loading && filteredHistory.length === 0 && (
                 <div className="py-12 text-center">
                   <Mic className="mx-auto mb-3 h-10 w-10 text-gray-300" />
-                  <h3 className="text-lg font-extrabold text-gray-900">No Zoom Phone calls found</h3>
+                  <h3 className="text-lg font-extrabold text-gray-900">No Zoom Phone records found</h3>
                   <p className="mx-auto mt-1 max-w-md text-sm text-gray-500">
-                    Adjust the date range, user filter, or search text to find matching calls.
+                    Adjust the date range, user filter, or search text to find matching calls and recordings.
                   </p>
                 </div>
               )}
             </div>
 
-            {selectedCall && (
+            {selectedHistoryItem && (
               <div className="card">
                 <div className="card-header">
                   <div>
                     <h2 className="card-title">Call Details</h2>
-                    <p className="card-subtitle">{selectedCall.id || selectedCall.call_id || 'Zoom Phone call'}</p>
+                    <p className="card-subtitle">
+                      {selectedHistoryItem.call?.id ||
+                        selectedHistoryItem.call?.call_id ||
+                        getHistoryPrimaryRecording(selectedHistoryItem)?.id ||
+                        'Zoom Phone record'}
+                    </p>
                   </div>
-                  <span className={statusClass(getCallStatus(selectedCall))}>{getCallStatus(selectedCall)}</span>
+                  <span className={statusClass(getHistoryStatus(selectedHistoryItem))}>{getHistoryStatus(selectedHistoryItem)}</span>
                 </div>
                 <div className="card-body space-y-5">
                   <div className="flex items-start gap-3">
@@ -1151,10 +1218,16 @@ const Calls: React.FC = () => {
                       <UserRound className="h-4 w-4" />
                     </span>
                     <div className="min-w-0">
-                      <p className="text-lg font-extrabold text-gray-900">{getCallName(selectedCall)}</p>
-                      <p className="text-sm font-semibold text-gray-700">{getCallPhone(selectedCall)}</p>
+                      <p className="text-lg font-extrabold text-gray-900">{getHistoryName(selectedHistoryItem)}</p>
+                      <p className="text-sm font-semibold text-gray-700">{getHistoryPhone(selectedHistoryItem)}</p>
                       <p className="text-sm text-gray-500">
-                        {selectedCall.caller_number || 'Unknown caller'} to {selectedCall.callee_number || 'Unknown recipient'}
+                        {selectedHistoryItem.call?.caller_number ||
+                          selectedHistoryItem.recording?.caller_number ||
+                          'Unknown caller'}{' '}
+                        to{' '}
+                        {selectedHistoryItem.call?.callee_number ||
+                          selectedHistoryItem.recording?.callee_number ||
+                          'Unknown recipient'}
                       </p>
                     </div>
                   </div>
@@ -1162,45 +1235,115 @@ const Calls: React.FC = () => {
                   <div className="grid grid-cols-2 gap-3">
                     <div className="rounded-lg border border-gray-200 p-3">
                       <p className="text-xs font-bold uppercase text-gray-500">User</p>
-                      <p className="mt-1 font-bold text-gray-900">{getCallAgent(selectedCall)}</p>
+                      <p className="mt-1 font-bold text-gray-900">{getHistoryAgent(selectedHistoryItem)}</p>
                     </div>
                     <div className="rounded-lg border border-gray-200 p-3">
                       <p className="text-xs font-bold uppercase text-gray-500">Duration</p>
-                      <p className="mt-1 font-bold text-gray-900">{formatDuration(selectedCall.duration || 0)}</p>
+                      <p className="mt-1 font-bold text-gray-900">{formatDuration(getHistoryDuration(selectedHistoryItem))}</p>
                     </div>
                     <div className="rounded-lg border border-gray-200 p-3">
                       <p className="text-xs font-bold uppercase text-gray-500">Extension</p>
-                      <p className="mt-1 font-bold text-gray-900">{selectedCall.owner?.extension_number || 'Not available'}</p>
+                      <p className="mt-1 font-bold text-gray-900">
+                        {selectedHistoryItem.call?.owner?.extension_number ||
+                          getHistoryPrimaryRecording(selectedHistoryItem)?.owner?.extension_number ||
+                          'Not available'}
+                      </p>
                     </div>
                     <div className="rounded-lg border border-gray-200 p-3">
                       <p className="text-xs font-bold uppercase text-gray-500">Site</p>
-                      <p className="mt-1 font-bold text-gray-900">{selectedCall.site?.name || 'Default'}</p>
+                      <p className="mt-1 font-bold text-gray-900">
+                        {selectedHistoryItem.call?.site?.name || getHistoryPrimaryRecording(selectedHistoryItem)?.site?.name || 'Default'}
+                      </p>
                     </div>
                   </div>
 
-                  <div>
+                  <div ref={recordingPanelRef}>
                     <p className="mb-2 flex items-center gap-2 text-sm font-bold text-gray-900">
                       <Mic className="h-4 w-4" />
                       Recording
                     </p>
                     <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
-                      {selectedCall.has_recording || selectedCall.recording_download_url || selectedCall.recording_id ? (
+                      {hasHistoryRecording(selectedHistoryItem) ? (
                         <div className="space-y-3">
                           <div className="flex flex-wrap items-center gap-2">
-                            <button type="button" className="btn btn-secondary" onClick={() => loadRecording(selectedCall)} disabled={recordingLoading}>
+                            <button
+                              type="button"
+                              className="btn btn-secondary"
+                              onClick={() => loadHistoryRecording(selectedHistoryItem)}
+                              disabled={recordingLoading}
+                            >
                               <Play className="h-4 w-4" />
-                              {recordingLoading ? 'Loading' : 'Load Audio'}
+                              {recordingLoading ? 'Loading' : 'Play Recording'}
                             </button>
-                            <button type="button" className="btn btn-secondary" onClick={() => downloadRecording(selectedCall)} disabled={recordingLoading}>
+                            <button
+                              type="button"
+                              className="btn btn-secondary"
+                              onClick={() => downloadHistoryRecording(selectedHistoryItem)}
+                              disabled={recordingLoading}
+                            >
                               <Download className="h-4 w-4" />
                               Download
                             </button>
                           </div>
-                          {audioUrl && audioCallId === getCallKey(selectedCall) && (
-                            <audio controls className="w-full" src={audioUrl}>
-                              <track kind="captions" />
-                            </audio>
-                          )}
+                          <div className="space-y-3">
+                            {(recordingLoading || (audioUrl && audioCallId === selectedHistoryItem.id)) && (
+                              <div className="rounded-lg border border-blue-100 bg-white p-3">
+                                <div className="mb-2 flex items-center justify-between text-xs font-bold text-blue-700">
+                                  <span>{audioLoadStatus || 'Ready to load recording'}</span>
+                                  <span>{audioLoadProgress}%</span>
+                                </div>
+                                <div className="h-2 overflow-hidden rounded-full bg-blue-100">
+                                  <div
+                                    className="h-full rounded-full bg-blue-600 transition-all duration-300"
+                                    style={{ width: `${Math.max(audioLoadProgress, audioUrl ? 100 : 6)}%` }}
+                                  />
+                                </div>
+                              </div>
+                            )}
+                            {!audioUrl && !recordingLoading && (
+                              <p className="text-sm font-semibold text-gray-500">Click Play Recording to load the audio stream.</p>
+                            )}
+                              <audio
+                                ref={audioRef}
+                                controls
+                                crossOrigin="anonymous"
+                                preload="metadata"
+                                className="w-full"
+                              src={audioCallId === selectedHistoryItem.id ? audioUrl || undefined : undefined}
+                                onLoadStart={() => {
+                                  setRecordingLoading(true);
+                                  setAudioLoadProgress((current) => Math.max(current, 20));
+                                  setAudioLoadStatus('Loading audio metadata...');
+                                }}
+                                onProgress={(event) => updateBufferedProgress(event.currentTarget)}
+                                onLoadedMetadata={() => {
+                                  setAudioLoadProgress(72);
+                                  setAudioLoadStatus('Metadata ready. Starting playback...');
+                                }}
+                                onCanPlay={() => {
+                                  setAudioLoadProgress(90);
+                                  setAudioLoadStatus('Audio ready. Starting playback...');
+                                }}
+                                onPlaying={() => {
+                                  setAudioLoadProgress(100);
+                                  setAudioLoadStatus('Playing');
+                                  setRecordingLoading(false);
+                                }}
+                                onWaiting={() => {
+                                  setRecordingLoading(true);
+                                  setAudioLoadStatus('Buffering audio...');
+                                }}
+                                onError={() => {
+                                  setRecordingLoading(false);
+                                  setAudioLoadStatus('Unable to play recording');
+                                  const mediaError = audioRef.current?.error;
+                                  const errorCode = mediaError?.code ? ` Media error code: ${mediaError.code}.` : '';
+                                  setZoomError(`Unable to play this Zoom recording.${errorCode} Please try Download, or refresh and play again.`);
+                                }}
+                              >
+                                <track kind="captions" />
+                              </audio>
+                          </div>
                         </div>
                       ) : (
                         <p className="text-sm text-gray-500">No recording metadata returned for this call.</p>
@@ -1212,90 +1355,29 @@ const Calls: React.FC = () => {
                     <p className="mb-2 text-sm font-bold text-gray-900">Zoom Phone Metadata</p>
                     <div className="space-y-2 rounded-lg border border-gray-200 bg-white p-3 text-sm text-gray-600">
                       <p>
-                        <strong className="text-gray-900">Result:</strong> {selectedCall.result || 'Not available'}
+                        <strong className="text-gray-900">Type:</strong>{' '}
+                        {getHistoryPrimaryRecording(selectedHistoryItem)?.recording_type ||
+                          selectedHistoryItem.call?.recording_type ||
+                          'Call log'}
                       </p>
                       <p>
-                        <strong className="text-gray-900">Path:</strong> {selectedCall.path || 'Not available'}
+                        <strong className="text-gray-900">Result:</strong>{' '}
+                        {selectedHistoryItem.call?.result || getHistoryStatus(selectedHistoryItem) || 'Not available'}
                       </p>
                       <p>
-                        <strong className="text-gray-900">Started:</strong> {formatDateTime(getCallStartedAt(selectedCall))}
+                        <strong className="text-gray-900">Path:</strong> {selectedHistoryItem.call?.path || 'Not available'}
                       </p>
                       <p>
-                        <strong className="text-gray-900">Ended:</strong> {formatDateTime(selectedCall.call_end_time)}
+                        <strong className="text-gray-900">Started:</strong> {formatDateTime(getHistoryStartedAt(selectedHistoryItem))}
+                      </p>
+                      <p>
+                        <strong className="text-gray-900">Ended:</strong>{' '}
+                        {formatDateTime(selectedHistoryItem.call?.call_end_time || getHistoryPrimaryRecording(selectedHistoryItem)?.end_time)}
                       </p>
                     </div>
                   </div>
                 </div>
               </div>
-            )}
-          </div>
-
-          <div className="card">
-            <div className="card-header">
-              <div>
-                <h2 className="card-title">Call Recordings</h2>
-                <p className="card-subtitle">{filteredRecordings.length} recording files match the current filters</p>
-              </div>
-              <span className="status-pill status-pill--green">{analytics.recordings.length} synced</span>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="table min-w-[980px]">
-                <thead>
-                  <tr>
-                    <th>Lead / Number</th>
-                    <th>Direction</th>
-                    <th>Duration</th>
-                    <th>User</th>
-                    <th>Type</th>
-                    <th>Recorded At</th>
-                    <th>Audio</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredRecordings.map((recording) => {
-                    const recordingKey = getRecordingKey(recording);
-                    return (
-                      <tr key={recordingKey}>
-                        <td>
-                          <p className="font-bold text-gray-900">{getRecordingName(recording)}</p>
-                          <p className="text-xs text-gray-500">{getRecordingPhone(recording)}</p>
-                          {recording.matched_lead?.email && <p className="text-xs text-gray-400">{recording.matched_lead.email}</p>}
-                        </td>
-                        <td>
-                          <span className={directionClass(recording.direction || 'Unknown')}>{recording.direction || 'Unknown'}</span>
-                        </td>
-                        <td>{formatDuration(recording.duration || 0)}</td>
-                        <td>
-                          <p className="font-semibold text-gray-800">{getRecordingOwner(recording)}</p>
-                          {recording.matched_user?.email && <p className="text-xs text-gray-500">{recording.matched_user.email}</p>}
-                        </td>
-                        <td>{recording.recording_type || 'Recording'}</td>
-                        <td>{formatDateTime(recording.date_time || recording.end_time)}</td>
-                        <td>
-                          <div className="flex flex-wrap items-center gap-2">
-                            <button type="button" className="btn btn-secondary" onClick={() => loadRecordingItem(recording)} disabled={recordingLoading}>
-                              <Play className="h-4 w-4" />
-                              Play
-                            </button>
-                            <button type="button" className="btn btn-secondary" onClick={() => downloadRecordingItem(recording)} disabled={recordingLoading}>
-                              <Download className="h-4 w-4" />
-                              Download
-                            </button>
-                          </div>
-                          {audioUrl && audioCallId === recordingKey && (
-                            <audio controls className="mt-3 w-full min-w-[220px]" src={audioUrl}>
-                              <track kind="captions" />
-                            </audio>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-            {!loading && filteredRecordings.length === 0 && (
-              <div className="p-8 text-center text-sm text-gray-500">No recordings match the current filters.</div>
             )}
           </div>
 

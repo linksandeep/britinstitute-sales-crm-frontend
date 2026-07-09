@@ -1047,7 +1047,58 @@ export const zoomPhoneApi = {
       return handleError(error);
     }
   },
+  getRecordingAudioUrl: (
+    recordingId: string,
+    options?: {
+      downloadUrl?: string;
+      disposition?: 'inline' | 'attachment';
+    }
+  ): string => {
+    const token = localStorage.getItem('token');
+  
+    const params = new URLSearchParams();
+  
+    if (options?.downloadUrl) {
+      params.append('downloadUrl', options.downloadUrl);
+    }
 
+    if (options?.disposition) {
+      params.append('disposition', options.disposition);
+    }
+  
+    if (token) {
+      params.append('token', token);
+    }
+  
+    return `${api.defaults.baseURL}/zoom-phone/account/recordings/${encodeURIComponent(
+      recordingId
+    )}/audio?${params.toString()}`;
+  },
+  getLeadRecordingAudioUrl: (
+    leadId: string,
+    recordingId: string,
+    options?: {
+      downloadUrl?: string;
+      callLogId?: string;
+      from?: string;
+      to?: string;
+      disposition?: 'inline' | 'attachment';
+    }
+  ): string => {
+    const token = localStorage.getItem('token');
+    const params = new URLSearchParams();
+
+    if (options?.downloadUrl) params.append('downloadUrl', options.downloadUrl);
+    if (options?.callLogId) params.append('callLogId', options.callLogId);
+    if (options?.from) params.append('from', options.from);
+    if (options?.to) params.append('to', options.to);
+    if (options?.disposition) params.append('disposition', options.disposition);
+    if (token) params.append('token', token);
+
+    return `${api.defaults.baseURL}/zoom-phone/leads/${encodeURIComponent(leadId)}/recordings/${encodeURIComponent(
+      recordingId
+    )}/audio?${params.toString()}`;
+  },
   getAccountCallLogs: async (query?: ZoomPhoneQuery): Promise<ApiResponse<ZoomPhoneLeadCallsResponse>> => {
     try {
       const params = new URLSearchParams();

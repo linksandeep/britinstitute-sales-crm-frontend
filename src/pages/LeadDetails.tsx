@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { leadApi, userApi, zoomPhoneApi } from '../lib/api';
@@ -176,6 +176,10 @@ const LeadDetails: React.FC = () => {
   const [audioUrl, setAudioUrl] = useState('');
   const [activeRecordingId, setActiveRecordingId] = useState('');
   const [audioLoadingId, setAudioLoadingId] = useState('');
+  const [audioLoadProgress, setAudioLoadProgress] = useState(0);
+  const [audioLoadStatus, setAudioLoadStatus] = useState('');
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const recordingPlayerRef = useRef<HTMLDivElement | null>(null);
 
   const [formData, setFormData] = useState({
     name: '',
@@ -315,15 +319,34 @@ const LeadDetails: React.FC = () => {
   }, [activeTab, fetchZoomPhoneData]);
 
   useEffect(() => {
-    return () => {
-      if (audioUrl) {
-        URL.revokeObjectURL(audioUrl);
-      }
-    };
+    if (!audioUrl) return;
+
+    const audio = audioRef.current;
+    recordingPlayerRef.current?.scrollIntoView({
+      behavior: 'smooth',
+      block: 'center'
+    });
+
+    if (!audio) return;
+    audio.load();
+    const playTimer = window.setTimeout(() => {
+      audio.play().catch(() => undefined);
+    }, 150);
+
+    return () => window.clearTimeout(playTimer);
   }, [audioUrl]);
 
+  const updateLeadAudioBufferedProgress = (audio: HTMLAudioElement) => {
+    if (!Number.isFinite(audio.duration) || audio.duration <= 0 || audio.buffered.length === 0) return;
+
+    const bufferedEnd = audio.buffered.end(audio.buffered.length - 1);
+    const bufferedPercent = Math.min(99, Math.max(20, Math.round((bufferedEnd / audio.duration) * 100)));
+    setAudioLoadProgress(bufferedPercent);
+    setAudioLoadStatus(`Buffering ${bufferedPercent}%`);
+  };
+
   const getRecordingAudioOptions = (recording: ZoomPhoneRecording) => {
-    const options: { downloadUrl?: string; callLogId?: string; from?: string; to?: string } = {
+    const options: { downloadUrl?: string; callLogId?: string; from?: string; to?: string; disposition?: 'inline' | 'attachment' } = {
       from: callDateRange.from,
       to: callDateRange.to
     };
@@ -344,22 +367,28 @@ const LeadDetails: React.FC = () => {
     }
 
     setAudioLoadingId(idForRecording);
+    setAudioLoadProgress(8);
+    setAudioLoadStatus('Preparing secure Zoom stream...');
 
     try {
-      const blob = await zoomPhoneApi.downloadLeadRecordingAudio(
+      const nextAudioUrl = zoomPhoneApi.getLeadRecordingAudioUrl(
         lead._id,
         idForRecording,
-        getRecordingAudioOptions(recording)
+        {
+          ...getRecordingAudioOptions(recording),
+          disposition: 'inline'
+        }
       );
-      const nextAudioUrl = URL.createObjectURL(blob);
-      setAudioUrl((current) => {
-        if (current) URL.revokeObjectURL(current);
+
+      setAudioUrl(() => {
         return nextAudioUrl;
       });
       setActiveRecordingId(idForRecording);
+      setAudioLoadProgress(18);
+      setAudioLoadStatus('Connecting to recording...');
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to play Zoom recording');
-    } finally {
+      setAudioLoadStatus('Unable to load recording');
       setAudioLoadingId('');
     }
   };
@@ -376,17 +405,20 @@ const LeadDetails: React.FC = () => {
     setAudioLoadingId(idForRecording);
 
     try {
-      const blob = await zoomPhoneApi.downloadLeadRecordingAudio(
+      const downloadUrl = zoomPhoneApi.getLeadRecordingAudioUrl(
         lead._id,
         idForRecording,
-        getRecordingAudioOptions(recording)
+        {
+          ...getRecordingAudioOptions(recording),
+          disposition: 'attachment'
+        }
       );
-      const downloadUrl = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = downloadUrl;
       link.download = `${lead.name.replace(/\s+/g, '-').toLowerCase()}-${idForRecording}.mp3`;
+      document.body.appendChild(link);
       link.click();
-      URL.revokeObjectURL(downloadUrl);
+      document.body.removeChild(link);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to download Zoom recording');
     } finally {
@@ -779,12 +811,64 @@ const LeadDetails: React.FC = () => {
                 </div>
 
                 {activeRecordingId && audioUrl && (
-                  <div className="rounded-lg border border-blue-200 bg-blue-50 p-4">
+                  <div ref={recordingPlayerRef} className="rounded-lg border border-blue-200 bg-blue-50 p-4">
                     <div className="mb-3 flex items-center gap-2 text-sm font-bold text-blue-800">
                       <PlayCircle className="h-4 w-4" />
                       Playing recording {activeRecordingId}
                     </div>
-                    <audio className="w-full" controls autoPlay src={audioUrl}>
+                    {audioLoadingId === activeRecordingId && (
+                      <div className="mb-3 rounded-lg border border-blue-100 bg-white p-3">
+                        <div className="mb-2 flex items-center justify-between text-xs font-bold text-blue-700">
+                          <span>{audioLoadStatus || 'Loading recording...'}</span>
+                          <span>{audioLoadProgress}%</span>
+                        </div>
+                        <div className="h-2 overflow-hidden rounded-full bg-blue-100">
+                          <div
+                            className="h-full rounded-full bg-blue-600 transition-all duration-300"
+                            style={{ width: `${Math.max(audioLoadProgress, 6)}%` }}
+                          />
+                        </div>
+                      </div>
+                    )}
+                    <audio
+                      ref={audioRef}
+                      className="w-full"
+                      controls
+                      crossOrigin="anonymous"
+                      autoPlay
+                      preload="metadata"
+                      src={audioUrl}
+                      onLoadStart={() => {
+                        setAudioLoadingId(activeRecordingId);
+                        setAudioLoadProgress((current) => Math.max(current, 20));
+                        setAudioLoadStatus('Loading audio metadata...');
+                      }}
+                      onProgress={(event) => updateLeadAudioBufferedProgress(event.currentTarget)}
+                      onLoadedMetadata={() => {
+                        setAudioLoadProgress(72);
+                        setAudioLoadStatus('Metadata ready. Starting playback...');
+                      }}
+                      onCanPlay={() => {
+                        setAudioLoadProgress(90);
+                        setAudioLoadStatus('Audio ready. Starting playback...');
+                      }}
+                      onPlaying={() => {
+                        setAudioLoadProgress(100);
+                        setAudioLoadStatus('Playing');
+                        setAudioLoadingId('');
+                      }}
+                      onWaiting={() => {
+                        setAudioLoadingId(activeRecordingId);
+                        setAudioLoadStatus('Buffering audio...');
+                      }}
+                      onError={() => {
+                        setAudioLoadingId('');
+                        setAudioLoadStatus('Unable to play recording');
+                        const mediaError = audioRef.current?.error;
+                        const errorCode = mediaError?.code ? ` Media error code: ${mediaError.code}.` : '';
+                        toast.error(`Unable to play this Zoom recording.${errorCode} Please try Download, or refresh and play again.`);
+                      }}
+                    >
                       <track kind="captions" />
                     </audio>
                   </div>
