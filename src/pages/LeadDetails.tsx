@@ -35,7 +35,7 @@ import {
 import toast from 'react-hot-toast';
 import { reminderApi } from '../lib/reminderApi';
 
-type LeadDetailTab = 'activity' | 'calls' | 'notes' | 'tasks';
+type LeadDetailTab = 'activity' | 'calls' | 'tasks';
 
 interface ReturnState {
   returnTo?: string;
@@ -160,6 +160,7 @@ const LeadDetails: React.FC = () => {
   const [assigning, setAssigning] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [activeTab, setActiveTab] = useState<LeadDetailTab>('activity');
+  const [profileInfoTab, setProfileInfoTab] = useState<'profile' | 'company'>('profile');
   const [newNote, setNewNote] = useState('');
   const [addingNote, setAddingNote] = useState(false);
   const [selectedAssignee, setSelectedAssignee] = useState('');
@@ -621,18 +622,26 @@ const LeadDetails: React.FC = () => {
 
       <div className="lead-detail-grid">
         <aside className="lead-profile-panel">
-          <div className="lead-profile-panel__avatar">{lead.name.charAt(0).toUpperCase()}</div>
-          <h1 className="lead-profile-panel__name">{lead.name}</h1>
-          <p className="lead-profile-panel__role">{lead.position || 'Lead'}</p>
+          <div className="lead-profile-hero">
+            <div className="lead-profile-panel__avatar">{lead.name.charAt(0).toUpperCase()}</div>
+            <div className="lead-profile-hero__content">
+              <h1 className="lead-profile-panel__name">{lead.name}</h1>
+              <p className="lead-profile-panel__role">{lead.position || 'Lead'}</p>
+              <div className="lead-profile-hero__badges">
+                <span className={statusTone(lead.status)}>{lead.status}</span>
+                <span className="lead-profile-priority-pill">{lead.priority}</span>
+              </div>
+            </div>
 
-          <div className="lead-profile-panel__actions">
-            <a href={`mailto:${lead.email}`} className="icon-button" title="Email lead">
-              <Mail className="h-4 w-4" />
-            </a>
-            <a href={`tel:${lead.phone}`} className="icon-button" title="Call lead">
-              <Phone className="h-4 w-4" />
-            </a>
-            <LeadWhatsAppButton lead={lead} className="icon-button" />
+            <div className="lead-profile-panel__actions">
+              <a href={`mailto:${lead.email}`} className="icon-button" title="Email lead">
+                <Mail className="h-4 w-4" />
+              </a>
+              <a href={`tel:${lead.phone}`} className="icon-button" title="Call lead">
+                <Phone className="h-4 w-4" />
+              </a>
+              <LeadWhatsAppButton lead={lead} className="icon-button" />
+            </div>
           </div>
 
           <div className="lead-profile-panel__section lead-profile-panel__section--contact">
@@ -645,13 +654,16 @@ const LeadDetails: React.FC = () => {
                 <a href={`mailto:${lead.email}`}>{lead.email || 'Not available'}</a>
               </div>
             </div>
-            <div className="lead-contact-card">
+            <div className="lead-contact-card lead-contact-card--phone">
               <span className="lead-contact-card__icon">
                 <Phone className="h-4 w-4" />
               </span>
               <div className="lead-field">
-                <span>Phone</span>
+                <span>Phone / Zoom Phone</span>
                 <a href={`tel:${lead.phone}`}>{lead.phone || 'Not available'}</a>
+                <small>
+                  Zoom: {lead.zoomPhoneNumber || lead.phone || 'Not linked'}
+                </small>
               </div>
             </div>
             <div className="lead-contact-card">
@@ -661,15 +673,6 @@ const LeadDetails: React.FC = () => {
               <div className="lead-field">
                 <span>WhatsApp</span>
                 <span>{lead.whatsapp || lead.phone || 'Not available'}</span>
-              </div>
-            </div>
-            <div className="lead-contact-card">
-              <span className="lead-contact-card__icon lead-contact-card__icon--blue">
-                <Headphones className="h-4 w-4" />
-              </span>
-              <div className="lead-field">
-                <span>Zoom Phone</span>
-                <span>{lead.zoomPhoneNumber || lead.phone || 'Not linked'}</span>
               </div>
             </div>
             <div className="lead-contact-card">
@@ -684,32 +687,55 @@ const LeadDetails: React.FC = () => {
           </div>
 
           <div className="lead-profile-panel__tabs">
-            <button type="button" className="active">Lead Profile</button>
-            <button type="button">Company</button>
+            <button
+              type="button"
+              className={profileInfoTab === 'profile' ? 'active' : ''}
+              onClick={() => setProfileInfoTab('profile')}
+            >
+              Lead Profile
+            </button>
+            <button
+              type="button"
+              className={profileInfoTab === 'company' ? 'active' : ''}
+              onClick={() => setProfileInfoTab('company')}
+            >
+              Company
+            </button>
           </div>
 
-          <div className="lead-profile-panel__section">
-            <div className="lead-profile-meta-row">
-              <span>Created</span>
-              <strong>{new Date(lead.createdAt).toLocaleDateString()}</strong>
-            </div>
-            <div className="lead-profile-meta-row">
-              <span>Last updated</span>
-              <strong>{new Date(lead.updatedAt).toLocaleDateString()}</strong>
-            </div>
-            <div className="lead-profile-meta-row">
-              <span>Source</span>
-              <strong>{formatSource(lead.source)}</strong>
-            </div>
+          <div className="lead-profile-panel__section lead-profile-panel__section--summary">
+            {profileInfoTab === 'profile' ? (
+              <>
+                <div className="lead-profile-meta-card">
+                  <span>Created</span>
+                  <strong>{new Date(lead.createdAt).toLocaleDateString()}</strong>
+                </div>
+                <div className="lead-profile-meta-card">
+                  <span>Last updated</span>
+                  <strong>{new Date(lead.updatedAt).toLocaleDateString()}</strong>
+                </div>
+                <div className="lead-profile-meta-card">
+                  <span>Source</span>
+                  <strong>{formatSource(lead.source)}</strong>
+                </div>
+              </>
+            ) : (
+              <div className="lead-company-placeholder">
+                <FileText className="h-5 w-5" />
+                <div>
+                  <strong>LMS data will be shown here</strong>
+                  <span>For now, no connection has been established.</span>
+                </div>
+              </div>
+            )}
           </div>
         </aside>
 
         <main className="lead-workspace-panel">
           <div className="lead-tabs" role="tablist" aria-label="Lead detail sections">
             {[
-              ['activity', 'Activity'],
+              ['activity', 'Activity & Notes'],
               ['calls', 'Call History'],
-              ['notes', 'Notes'],
               ['tasks', 'Tasks']
             ].map(([tab, label]) => (
               <button
@@ -748,7 +774,29 @@ const LeadDetails: React.FC = () => {
                 </div>
 
                 <div>
-                  <h2>Activity history</h2>
+                  <h2>Activity notes</h2>
+                  {canEdit && (
+                    <div className="lead-note-composer lead-note-composer--inline">
+                      <textarea
+                        value={newNote}
+                        onChange={(event) => setNewNote(event.target.value)}
+                        placeholder="Add a note about this lead..."
+                        className="form-input"
+                        rows={4}
+                      />
+                      <div className="flex justify-end">
+                        <button
+                          type="button"
+                          className="btn btn-primary"
+                          onClick={handleAddNote}
+                          disabled={addingNote || !newNote.trim()}
+                        >
+                          {addingNote ? <div className="loading-spinner" /> : <Plus className="h-4 w-4" />}
+                          Add Note
+                        </button>
+                      </div>
+                    </div>
+                  )}
                   {sortedNotes.length > 0 ? (
                     sortedNotes.map((note) => (
                       <div key={note.id} className="lead-activity-item">
@@ -1042,51 +1090,6 @@ const LeadDetails: React.FC = () => {
                     </div>
                   )}
                 </div>
-              </div>
-            )}
-
-            {activeTab === 'notes' && (
-              <div className="lead-notes-panel">
-                {canEdit && (
-                  <div className="lead-note-composer">
-                    <textarea
-                      value={newNote}
-                      onChange={(event) => setNewNote(event.target.value)}
-                      placeholder="Add a note about this lead..."
-                      className="form-input"
-                      rows={4}
-                    />
-                    <div className="flex justify-end">
-                      <button
-                        type="button"
-                        className="btn btn-primary"
-                        onClick={handleAddNote}
-                        disabled={addingNote || !newNote.trim()}
-                      >
-                        {addingNote ? <div className="loading-spinner" /> : <Plus className="h-4 w-4" />}
-                        Add Note
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                {sortedNotes.length > 0 ? (
-                  sortedNotes.map((note) => (
-                    <div key={note.id} className="lead-note-card">
-                      <div className="lead-note-card__meta">
-                        <strong>{note.createdBy?.name || 'Team member'}</strong>
-                        <span>{new Date(note.createdAt).toLocaleString()}</span>
-                      </div>
-                      <p>{note.content}</p>
-                    </div>
-                  ))
-                ) : (
-                  <div className="lead-empty-state">
-                    <FileText className="h-10 w-10" />
-                    <h3>No notes yet</h3>
-                    <p>Use notes to track customer context, outcomes, and next steps.</p>
-                  </div>
-                )}
               </div>
             )}
 
