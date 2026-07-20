@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
-import axios from "axios";
 import { X } from "lucide-react";
 import toast from "react-hot-toast";
+import api from "../lib/api";
 
 interface Props {
   userId: string;
@@ -22,12 +22,8 @@ const UserPerformanceDrawer: React.FC<Props> = ({ userId, onClose }) => {
       const year = today.getFullYear();
 
       const [perfRes, analyticsRes] = await Promise.all([
-        axios.get(
-          `http://localhost:8000/api/performance/${userId}?from=${from}&to=${to}`
-        ),
-        axios.get(
-          `http://localhost:8000/api/attendance/analytics/${userId}?month=${month}&year=${year}`
-        ),
+        api.get(`/performance/${userId}?from=${from}&to=${to}`),
+        api.get(`/attendance/analytics/${userId}?month=${month}&year=${year}`),
       ]);
 
       if (perfRes.data.success) setPerformance(perfRes.data.data);

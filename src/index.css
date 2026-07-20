@@ -1309,14 +1309,14 @@ a {
 
 .lead-call-filter-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(220px, 300px);
+  grid-template-columns: 1fr;
   gap: 18px;
-  align-items: start;
+  align-items: stretch;
 }
 
 .lead-call-filter-copy {
   min-width: 0;
-  max-width: 460px;
+  max-width: 100%;
 }
 
 .lead-call-filter-title {
@@ -1337,11 +1337,11 @@ a {
 
 .lead-call-filter-controls {
   display: grid;
-  width: min(100%, 300px);
-  grid-template-columns: 1fr;
+  width: 100%;
+  grid-template-columns: repeat(2, minmax(180px, 1fr)) minmax(150px, 190px);
   gap: 12px;
   align-items: end;
-  justify-self: end;
+  justify-self: stretch;
   min-width: 0;
 }
 
@@ -1671,13 +1671,17 @@ a {
   font-size: 12px;
 }
 
-@media (max-width: 1320px) {
+@media (max-width: 1560px) {
   .lead-detail-grid {
     grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
   }
 
+  .lead-workspace-panel {
+    grid-column: 2;
+  }
+
   .lead-side-panel {
-    grid-column: 1 / -1;
+    grid-column: 2;
   }
 
   .lead-call-filter-layout {
@@ -1686,8 +1690,8 @@ a {
 
   .lead-call-filter-controls {
     width: 100%;
-    max-width: 360px;
-    justify-self: start;
+    max-width: none;
+    justify-self: stretch;
   }
 }
 
@@ -1726,8 +1730,25 @@ a {
     grid-column: auto;
   }
 
+  .lead-workspace-panel {
+    grid-column: auto;
+  }
+
   .lead-call-filter-controls {
     max-width: none;
+  }
+
+  .lead-call-row {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  .lead-call-title {
+    white-space: normal;
+  }
+
+  .lead-call-actions {
+    justify-content: flex-start;
   }
 }
 
@@ -1923,10 +1944,14 @@ a {
   }
 
   .lead-call-filter-controls {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     width: 100%;
     max-width: none;
     justify-self: stretch;
+  }
+
+  .lead-call-sync-button {
+    grid-column: 1 / -1;
   }
 
   .lead-call-sync-button,
@@ -1996,6 +2021,14 @@ a {
 
   .lead-call-filter-title {
     font-size: 20px;
+  }
+
+  .lead-call-filter-controls {
+    grid-template-columns: 1fr;
+  }
+
+  .lead-call-sync-button {
+    grid-column: auto;
   }
 
   .lead-call-badges {

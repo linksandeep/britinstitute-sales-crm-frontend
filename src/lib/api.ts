@@ -27,9 +27,39 @@ import type {
   ZoomPhoneStatus,
 
 } from '../types';
+
+const isLoopbackHost = (hostname: string) => hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
+
+const resolveApiBaseUrl = () => {
+  const configuredUrl = import.meta.env.VITE_API_URL;
+
+  if (typeof window !== 'undefined') {
+    const { protocol, hostname } = window.location;
+
+    if (configuredUrl) {
+      try {
+        const url = new URL(configuredUrl);
+        if (!isLoopbackHost(hostname) && isLoopbackHost(url.hostname)) {
+          url.protocol = protocol;
+          url.hostname = hostname;
+          return url.toString().replace(/\/$/, '');
+        }
+      } catch {
+        return configuredUrl;
+      }
+
+      return configuredUrl;
+    }
+
+    return `${protocol}//${hostname}:8000/api`;
+  }
+
+  return configuredUrl || 'http://localhost:8000/api';
+};
+
 // Create axios instance with base configuration
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL || 'http://localhost:8000/api',
+  baseURL: resolveApiBaseUrl(),
   timeout: 30000,
   headers: {
     'Content-Type': 'application/json',
