@@ -635,26 +635,51 @@ const LeadDetails: React.FC = () => {
             <LeadWhatsAppButton lead={lead} className="icon-button" />
           </div>
 
-          <div className="lead-profile-panel__section">
-            <div className="lead-field">
-              <span>Email</span>
-              <a href={`mailto:${lead.email}`}>{lead.email || 'Not available'}</a>
+          <div className="lead-profile-panel__section lead-profile-panel__section--contact">
+            <div className="lead-contact-card">
+              <span className="lead-contact-card__icon">
+                <Mail className="h-4 w-4" />
+              </span>
+              <div className="lead-field">
+                <span>Email</span>
+                <a href={`mailto:${lead.email}`}>{lead.email || 'Not available'}</a>
+              </div>
             </div>
-            <div className="lead-field">
-              <span>Phone</span>
-              <a href={`tel:${lead.phone}`}>{lead.phone || 'Not available'}</a>
+            <div className="lead-contact-card">
+              <span className="lead-contact-card__icon">
+                <Phone className="h-4 w-4" />
+              </span>
+              <div className="lead-field">
+                <span>Phone</span>
+                <a href={`tel:${lead.phone}`}>{lead.phone || 'Not available'}</a>
+              </div>
             </div>
-            <div className="lead-field">
-              <span>WhatsApp</span>
-              <span>{lead.whatsapp || lead.phone || 'Not available'}</span>
+            <div className="lead-contact-card">
+              <span className="lead-contact-card__icon lead-contact-card__icon--green">
+                <MessageSquare className="h-4 w-4" />
+              </span>
+              <div className="lead-field">
+                <span>WhatsApp</span>
+                <span>{lead.whatsapp || lead.phone || 'Not available'}</span>
+              </div>
             </div>
-            <div className="lead-field">
-              <span>Zoom Phone</span>
-              <span>{lead.zoomPhoneNumber || lead.phone || 'Not linked'}</span>
+            <div className="lead-contact-card">
+              <span className="lead-contact-card__icon lead-contact-card__icon--blue">
+                <Headphones className="h-4 w-4" />
+              </span>
+              <div className="lead-field">
+                <span>Zoom Phone</span>
+                <span>{lead.zoomPhoneNumber || lead.phone || 'Not linked'}</span>
+              </div>
             </div>
-            <div className="lead-field">
-              <span>Folder</span>
-              <span>{lead.folder || 'Uncategorized'}</span>
+            <div className="lead-contact-card">
+              <span className="lead-contact-card__icon lead-contact-card__icon--slate">
+                <FileText className="h-4 w-4" />
+              </span>
+              <div className="lead-field">
+                <span>Folder</span>
+                <span>{lead.folder || 'Uncategorized'}</span>
+              </div>
             </div>
           </div>
 
@@ -664,17 +689,17 @@ const LeadDetails: React.FC = () => {
           </div>
 
           <div className="lead-profile-panel__section">
-            <div className="lead-field">
+            <div className="lead-profile-meta-row">
               <span>Created</span>
-              <span>{new Date(lead.createdAt).toLocaleDateString()}</span>
+              <strong>{new Date(lead.createdAt).toLocaleDateString()}</strong>
             </div>
-            <div className="lead-field">
+            <div className="lead-profile-meta-row">
               <span>Last updated</span>
-              <span>{new Date(lead.updatedAt).toLocaleDateString()}</span>
+              <strong>{new Date(lead.updatedAt).toLocaleDateString()}</strong>
             </div>
-            <div className="lead-field">
+            <div className="lead-profile-meta-row">
               <span>Source</span>
-              <span>{formatSource(lead.source)}</span>
+              <strong>{formatSource(lead.source)}</strong>
             </div>
           </div>
         </aside>
@@ -754,19 +779,19 @@ const LeadDetails: React.FC = () => {
 
             {activeTab === 'calls' && (
               <div className="space-y-5">
-                <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-                  <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-                    <div>
+                <div className="lead-call-filter-card rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+                  <div className="lead-call-filter-layout">
+                    <div className="lead-call-filter-copy">
                       <div className="flex items-center gap-2 text-sm font-extrabold uppercase tracking-wide text-blue-600">
                         <Headphones className="h-4 w-4" />
                         Zoom Phone
                       </div>
-                      <h2 className="mt-1 text-xl font-extrabold text-slate-950">Lead call history</h2>
-                      <p className="mt-1 text-sm text-slate-500">
+                      <h2 className="lead-call-filter-title">Lead call history</h2>
+                      <p className="lead-call-filter-subtitle">
                         Matching calls for {leadPhoneNumbers.length > 0 ? leadPhoneNumbers.join(', ') : 'this lead'}.
                       </p>
                     </div>
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+                    <div className="lead-call-filter-controls">
                       <div className="form-group">
                         <label className="form-label">From</label>
                         <input
@@ -789,7 +814,7 @@ const LeadDetails: React.FC = () => {
                           }
                         />
                       </div>
-                      <button type="button" className="btn btn-secondary" onClick={fetchZoomPhoneData} disabled={zoomLoading}>
+                      <button type="button" className="btn btn-secondary lead-call-sync-button" onClick={fetchZoomPhoneData} disabled={zoomLoading}>
                         {zoomLoading ? <div className="loading-spinner" /> : <RefreshCw className="h-4 w-4" />}
                         Sync
                       </button>
@@ -891,7 +916,7 @@ const LeadDetails: React.FC = () => {
                       <div className="skeleton h-20" />
                     </div>
                   ) : zoomCalls.length > 0 ? (
-                    <div className="divide-y divide-slate-100">
+                    <div className="lead-call-timeline-list">
                       {zoomCalls.map((call, index) => {
                         const idForCall = callLogId(call) || `${call.date_time || 'call'}-${index}`;
                         const matchedRecordings = zoomRecordings.filter((recording) => recordingBelongsToCall(call, recording));
@@ -910,32 +935,31 @@ const LeadDetails: React.FC = () => {
                             : call.callee_name || call.callee_number || 'Unknown recipient';
 
                         return (
-                          <div key={idForCall} className="p-4">
-                            <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-                              <div className="min-w-0">
-                                <div className="flex flex-wrap items-center gap-2">
+                          <div key={idForCall} className="lead-call-timeline-item">
+                            <div className="lead-call-row">
+                              <div className="lead-call-main">
+                                <div className="lead-call-badges">
                                   <span className={statusTone(call.result || 'New')}>{call.result || 'Unknown'}</span>
-                                  <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-extrabold text-slate-600">
+                                  <span className="lead-call-direction">
                                     {call.direction || call.call_type || 'Call'}
                                   </span>
                                   {matchedRecordings.length > 0 && (
-                                    <span className="rounded-full bg-blue-50 px-3 py-1 text-xs font-extrabold text-blue-700">
+                                    <span className="lead-call-recording-pill">
                                       {matchedRecordings.length} recording{matchedRecordings.length === 1 ? '' : 's'}
                                     </span>
                                   )}
                                 </div>
-                                <h4 className="mt-3 text-base font-extrabold text-slate-950">
+                                <h4 className="lead-call-title">
                                   {callerLabel} to {calleeLabel}
                                 </h4>
-                                <p className="mt-1 text-sm text-slate-500">
-                                  {formatCallDate(call.date_time || call.answer_start_time)} · {formatDuration(call.duration)}
-                                </p>
-                                <p className="mt-1 text-sm text-slate-500">
-                                  Called by: {call.matched_user?.name || call.owner?.name || ownerName}
-                                </p>
+                                <div className="lead-call-meta">
+                                  <span>{formatCallDate(call.date_time || call.answer_start_time)}</span>
+                                  <span>{formatDuration(call.duration)}</span>
+                                  <span>Called by {call.matched_user?.name || call.owner?.name || ownerName}</span>
+                                </div>
                               </div>
-                              <div className="flex flex-wrap gap-2">
-                                <a href={`tel:${lead.phone}`} className="btn btn-secondary">
+                              <div className="lead-call-actions">
+                                <a href={`tel:${lead.phone}`} className="btn btn-secondary lead-call-action-button">
                                   <Phone className="h-4 w-4" />
                                   Call
                                 </a>
@@ -943,7 +967,7 @@ const LeadDetails: React.FC = () => {
                                   <>
                                     <button
                                       type="button"
-                                      className="btn btn-primary"
+                                      className="btn btn-primary lead-call-action-button lead-call-action-button--primary"
                                       onClick={() => playRecording(primaryRecording)}
                                       disabled={audioLoadingId === idForPrimaryRecording}
                                     >
@@ -952,11 +976,11 @@ const LeadDetails: React.FC = () => {
                                       ) : (
                                         <PlayCircle className="h-4 w-4" />
                                       )}
-                                      Play Recording
+                                      Play
                                     </button>
                                     <button
                                       type="button"
-                                      className="btn btn-secondary"
+                                      className="btn btn-secondary lead-call-action-button"
                                       onClick={() => downloadRecording(primaryRecording)}
                                       disabled={audioLoadingId === idForPrimaryRecording}
                                     >
@@ -969,19 +993,19 @@ const LeadDetails: React.FC = () => {
                             </div>
 
                             {matchedRecordings.length > 1 && (
-                              <div className="mt-4 grid grid-cols-1 gap-3 lg:grid-cols-2">
+                              <div className="lead-extra-recordings">
                                 {matchedRecordings.slice(1).map((recording, recordingIndex) => {
                                   const idForRecording = recordingId(recording) || `${recording.date_time || 'recording'}-${recordingIndex}`;
                                   return (
-                                    <div key={idForRecording} className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-                                      <div className="flex items-start justify-between gap-3">
-                                        <div>
-                                          <p className="font-extrabold text-slate-900">
+                                    <div key={idForRecording} className="lead-extra-recording-card">
+                                      <div className="lead-extra-recording-card__content">
+                                        <div className="min-w-0">
+                                          <p>
                                             {recording.recording_type || 'Additional recording'}
                                           </p>
-                                          <p className="text-sm text-slate-500">
+                                          <span>
                                             {formatCallDate(recording.date_time)} · {formatDuration(recording.duration)}
-                                          </p>
+                                          </span>
                                         </div>
                                         <button
                                           type="button"
