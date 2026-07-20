@@ -1041,7 +1041,7 @@ const Calls: React.FC = () => {
         <>
           <div className="card">
             <div className="card-body">
-              <div className="grid grid-cols-1 gap-3 xl:grid-cols-[150px_150px_1fr_220px_200px_200px]">
+              <div className="call-filter-grid">
                 <label className="space-y-1">
                   <span className="text-xs font-bold uppercase text-gray-500">From</span>
                   <input
@@ -1127,8 +1127,8 @@ const Calls: React.FC = () => {
                 </div>
                 <span className="status-pill status-pill--slate">{unifiedHistory.length} synced</span>
               </div>
-              <div className="overflow-x-auto">
-                <table className="table min-w-[820px]">
+              <div className="call-history-scroll">
+                <table className="table calls-history-table">
                   <thead>
                     <tr>
                       <th>Lead / Number</th>
@@ -1154,25 +1154,25 @@ const Calls: React.FC = () => {
                             }
                           }}
                         >
-                          <td>
+                          <td data-label="Lead / Number">
                             <div>
                               <p className="font-bold text-gray-900">{getHistoryName(item)}</p>
                               <p className="text-xs text-gray-500">{getHistoryPhone(item)}</p>
                               {getHistoryLeadEmail(item) && <p className="text-xs text-gray-400">{getHistoryLeadEmail(item)}</p>}
                             </div>
                           </td>
-                          <td>
+                          <td data-label="Direction">
                             <span className={directionClass(getHistoryDirection(item))}>{getHistoryDirection(item)}</span>
                           </td>
-                          <td>
+                          <td data-label="Status">
                             <span className={statusClass(getHistoryStatus(item))}>{getHistoryStatus(item)}</span>
                           </td>
-                          <td>{formatDuration(getHistoryDuration(item))}</td>
-                          <td>
+                          <td data-label="Duration">{formatDuration(getHistoryDuration(item))}</td>
+                          <td data-label="User">
                             <p className="font-semibold text-gray-800">{getHistoryAgent(item)}</p>
                             {getHistoryUserEmail(item) && <p className="text-xs text-gray-500">{getHistoryUserEmail(item)}</p>}
                           </td>
-                          <td>
+                          <td data-label="Recording">
                             {recordingCount > 0 ? (
                               <span className="status-pill status-pill--green">
                                 {recordingCount} file{recordingCount === 1 ? '' : 's'}
@@ -1232,7 +1232,7 @@ const Calls: React.FC = () => {
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="call-detail-metrics">
                     <div className="rounded-lg border border-gray-200 p-3">
                       <p className="text-xs font-bold uppercase text-gray-500">User</p>
                       <p className="mt-1 font-bold text-gray-900">{getHistoryAgent(selectedHistoryItem)}</p>
@@ -1265,7 +1265,7 @@ const Calls: React.FC = () => {
                     <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
                       {hasHistoryRecording(selectedHistoryItem) ? (
                         <div className="space-y-3">
-                          <div className="flex flex-wrap items-center gap-2">
+                          <div className="recording-actions">
                             <button
                               type="button"
                               className="btn btn-secondary"
@@ -1287,7 +1287,7 @@ const Calls: React.FC = () => {
                           </div>
                           <div className="space-y-3">
                             {(recordingLoading || (audioUrl && audioCallId === selectedHistoryItem.id)) && (
-                              <div className="rounded-lg border border-blue-100 bg-white p-3">
+                              <div className="recording-progress rounded-lg border border-blue-100 bg-white p-3">
                                 <div className="mb-2 flex items-center justify-between text-xs font-bold text-blue-700">
                                   <span>{audioLoadStatus || 'Ready to load recording'}</span>
                                   <span>{audioLoadProgress}%</span>
@@ -1308,7 +1308,7 @@ const Calls: React.FC = () => {
                                 controls
                                 crossOrigin="anonymous"
                                 preload="metadata"
-                                className="w-full"
+                                className="recording-audio"
                               src={audioCallId === selectedHistoryItem.id ? audioUrl || undefined : undefined}
                                 onLoadStart={() => {
                                   setRecordingLoading(true);
