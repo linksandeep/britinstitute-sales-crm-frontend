@@ -4,6 +4,8 @@ import {
   BarChart3,
   CalendarClock,
   CheckCircle,
+  ChevronLeft,
+  ChevronRight,
   Clock,
   Download,
   Headphones,
@@ -150,6 +152,28 @@ const formatDateTime = (value?: string) => {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleString();
+};
+
+const formatCompactDateTime = (value?: string) => {
+  if (!value) return 'Not available';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit'
+  });
+};
+
+const isBenignPlayInterruption = (error: unknown) => {
+  if (!(error instanceof Error)) return false;
+  const message = error.message.toLowerCase();
+  return (
+    error.name === 'AbortError' ||
+    message.includes('interrupted by a new load request') ||
+    message.includes('interrupted by a call to pause')
+  );
 };
 
 const emptyAnalytics: ZoomPhoneAnalyticsResponse = {
@@ -991,7 +1015,8 @@ const Calls: React.FC = () => {
     if (!recordingId) return;
     if (audioUrl && audioCallId === recordingKey) {
       scrollToRecordingPanel();
-      audioRef.current?.play().catch(() => {
+      audioRef.current?.play().catch((error) => {
+        if (isBenignPlayInterruption(error)) return;
         setAudioLoadStatus('Press play on the audio control to start playback');
       });
       return;
@@ -1016,9 +1041,21 @@ const Calls: React.FC = () => {
         audioRef.current.load();
         setAudioLoadProgress(36);
         setAudioLoadStatus('Starting playback...');
-        await audioRef.current.play();
+        await audioRef.current.play().catch((error) => {
+          if (isBenignPlayInterruption(error)) {
+            setAudioLoadStatus('Audio ready. Press play to start.');
+            setRecordingLoading(false);
+            return;
+          }
+          throw error;
+        });
       }
     } catch (error) {
+      if (isBenignPlayInterruption(error)) {
+        setAudioLoadStatus('Audio ready. Press play to start.');
+        setRecordingLoading(false);
+        return;
+      }
       setZoomError(error instanceof Error ? error.message : 'Unable to load this Zoom Phone recording');
       setAudioLoadStatus('Unable to load recording');
       setRecordingLoading(false);
@@ -1575,9 +1612,11 @@ const Calls: React.FC = () => {
                             </div>
                           </td>
                           <td data-label="Direction">
-                            <div className="space-y-1">
+                            <div className="inline-flex min-w-[96px] flex-col items-start gap-1">
                               <span className={directionClass(getHistoryDirection(item))}>{getHistoryDirection(item)}</span>
-                              <p className="text-[11px] font-medium leading-snug text-gray-400">{formatDateTime(getHistoryStartedAt(item))}</p>
+                              <span className="whitespace-nowrap text-[11px] font-semibold uppercase tracking-wide text-gray-400">
+                                {formatCompactDateTime(getHistoryStartedAt(item))}
+                              </span>
                             </div>
                           </td>
                           <td data-label="Status">
@@ -1604,11 +1643,14 @@ const Calls: React.FC = () => {
                 </table>
               </div>
               {filteredHistory.length > 0 && (
-                <div className="flex flex-col gap-3 border-t border-gray-200 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="flex items-center gap-2 text-sm text-gray-600">
-                    <span>Rows per page</span>
+                <div className="flex flex-col gap-3 border-t border-gray-200 bg-gray-50/70 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex flex-wrap items-center gap-3 text-sm text-gray-600">
+                    <label htmlFor="call-history-page-size" className="font-semibold text-gray-700">
+                      Rows per page
+                    </label>
                     <select
-                      className="form-input h-9 w-24 py-1 text-sm"
+                      id="call-history-page-size"
+                      className="h-9 rounded-lg border border-gray-300 bg-white px-3 text-sm font-semibold text-gray-900 shadow-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
                       value={historyPageSize}
                       onChange={(event) => setHistoryPageSize(Number(event.target.value))}
                       aria-label="Call history rows per page"
@@ -1619,27 +1661,34 @@ const Calls: React.FC = () => {
                         </option>
                       ))}
                     </select>
+                    <span className="text-gray-400">|</span>
+                    <span>
+                      {historyStartIndex + 1}-{Math.min(historyStartIndex + historyPageSize, filteredHistory.length)} of {filteredHistory.length}
+                    </span>
                   </div>
                   <div className="flex items-center justify-between gap-3 sm:justify-end">
-                    <p className="text-sm font-medium text-gray-600">
-                      Page {safeHistoryPage} of {historyTotalPages}
-                    </p>
-                    <div className="flex items-center gap-2">
+                    <span className="rounded-full bg-white px-3 py-1 text-sm font-semibold text-gray-700 shadow-sm ring-1 ring-gray-200">
+                      Page {safeHistoryPage} / {historyTotalPages}
+                    </span>
+                    <div className="flex items-center overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm">
                       <button
                         type="button"
-                        className="btn btn-secondary h-9 px-3"
+                        className="flex h-9 w-10 items-center justify-center text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:text-gray-300"
                         onClick={() => setHistoryPage((page) => Math.max(1, page - 1))}
                         disabled={safeHistoryPage === 1}
+                        aria-label="Previous page"
                       >
-                        Previous
+                        <ChevronLeft className="h-4 w-4" />
                       </button>
+                      <div className="h-9 w-px bg-gray-200" />
                       <button
                         type="button"
-                        className="btn btn-secondary h-9 px-3"
+                        className="flex h-9 w-10 items-center justify-center text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:text-gray-300"
                         onClick={() => setHistoryPage((page) => Math.min(historyTotalPages, page + 1))}
                         disabled={safeHistoryPage === historyTotalPages}
+                        aria-label="Next page"
                       >
-                        Next
+                        <ChevronRight className="h-4 w-4" />
                       </button>
                     </div>
                   </div>
@@ -1793,6 +1842,7 @@ const Calls: React.FC = () => {
                                 }}
                                 onError={() => {
                                   setRecordingLoading(false);
+                                  if (!audioUrl || audioCallId !== selectedHistoryItem.id) return;
                                   setAudioLoadStatus('Unable to play recording');
                                   const mediaError = audioRef.current?.error;
                                   const errorCode = mediaError?.code ? ` Media error code: ${mediaError.code}.` : '';
