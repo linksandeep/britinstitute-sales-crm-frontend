@@ -31,14 +31,17 @@ import type {
 } from '../types';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 
-const formatDateInput = (date: Date) => date.toISOString().slice(0, 10);
+const formatDateInput = (date: Date) => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
 
 const getDefaultDateRange = () => {
   const to = new Date();
-  const from = new Date(to);
-  from.setDate(from.getDate() - 7);
   return {
-    from: formatDateInput(from),
+    from: formatDateInput(to),
     to: formatDateInput(to)
   };
 };
@@ -124,9 +127,21 @@ const statusClass = (status: string) => {
   return 'status-pill status-pill--slate';
 };
 
+const getDirectionText = (direction?: string) => (direction || '').trim().toLowerCase();
+
+const isIncomingDirection = (direction?: string) => {
+  const text = getDirectionText(direction);
+  return text === 'incoming' || text === 'inbound' || text.startsWith('incoming ') || text.startsWith('inbound ');
+};
+
+const isOutgoingDirection = (direction?: string) => {
+  const text = getDirectionText(direction);
+  return text === 'outgoing' || text === 'outbound' || text.startsWith('outgoing ') || text.startsWith('outbound ');
+};
+
 const directionClass = (direction: string) => {
-  if (direction === 'Incoming' || direction.toLowerCase().includes('in')) return 'status-pill status-pill--violet';
-  if (direction === 'Outgoing' || direction.toLowerCase().includes('out')) return 'status-pill status-pill--blue';
+  if (isIncomingDirection(direction)) return 'status-pill status-pill--violet';
+  if (isOutgoingDirection(direction)) return 'status-pill status-pill--blue';
   return 'status-pill status-pill--slate';
 };
 
@@ -219,6 +234,23 @@ const getRecordingIdentifierValues = (recording: ZoomPhoneRecording) =>
     getRecordingKey(recording)
   ]);
 
+const getRecordingCallGroupKey = (recording: ZoomPhoneRecording) => {
+  const identifiers = uniqueStrings([
+    recording.call_id,
+    recording.call_log_id,
+    recording.call_history_id,
+    recording.call_element_id
+  ]);
+  if (identifiers.length > 0) return `recording-call:${identifiers[0]}`;
+
+  const recordingTime = getDateMs(recording.date_time || recording.end_time);
+  const minuteBucket = recordingTime ? Math.floor(recordingTime / 60_000) : recording.date_time || recording.end_time || 'unknown-time';
+  const numbers = getRecordingMatchNumbers(recording).sort().join('-') || 'unknown-number';
+  const owner = getRecordingUserFilterKey(recording);
+
+  return `recording-fallback:${owner}:${numbers}:${minuteBucket}`;
+};
+
 const getCallMatchNumbers = (call: ZoomPhoneCallLog) =>
   uniqueStrings([
     call.matched_lead?.phone,
@@ -303,6 +335,34 @@ const getHistoryRecordingCount = (item: UnifiedCallHistoryItem) => {
 };
 
 const hasHistoryRecording = (item: UnifiedCallHistoryItem) => getHistoryRecordingCount(item) > 0;
+
+const getStatusText = (status?: string) => (status || '').trim().toLowerCase();
+
+const isConnectedHistoryItem = (item: UnifiedCallHistoryItem) => {
+  const status = getStatusText(item.call ? getCallStatus(item.call) : undefined);
+  if (!status) return false;
+  return (
+    status.includes('connect') ||
+    status.includes('answer') ||
+    status.includes('completed') ||
+    status.includes('accepted')
+  );
+};
+
+const isMissedHistoryItem = (item: UnifiedCallHistoryItem) => {
+  const status = getStatusText(item.call ? getCallStatus(item.call) : undefined);
+  return status.includes('miss') || status.includes('failed') || status.includes('no answer') || status.includes('abandoned');
+};
+
+const buildUserFilterTokens = (values: Array<string | undefined>) =>
+  values
+    .flatMap((value) => String(value || '').split(','))
+    .flatMap((value) => {
+      const normalized = value.trim().toLowerCase();
+      const phone = normalizeMatchPhone(value);
+      return phone ? [normalized, phone] : [normalized];
+    })
+    .filter(Boolean);
 
 const getMetricCallAgent = (call: ZoomPhoneMetricCall) =>
   call.matched_user?.name || call.caller?.name || call.callee?.name || call.owner?.name || 'Zoom user';
@@ -467,14 +527,29 @@ const Calls: React.FC = () => {
       };
     });
 
+    const unmatchedRecordings = new Map<string, ZoomPhoneRecording[]>();
+
     analytics.recordings.forEach((recording) => {
       const recordingKey = getRecordingKey(recording);
       if (usedRecordingKeys.has(recordingKey)) return;
 
+      const groupKey = getRecordingCallGroupKey(recording);
+      const current = unmatchedRecordings.get(groupKey) || [];
+      current.push(recording);
+      unmatchedRecordings.set(groupKey, current);
+    });
+
+    unmatchedRecordings.forEach((recordings, groupKey) => {
+      const sortedRecordings = [...recordings].sort((left, right) => {
+        const leftDate = getDateMs(left.date_time || left.end_time) || 0;
+        const rightDate = getDateMs(right.date_time || right.end_time) || 0;
+        return rightDate - leftDate;
+      });
+
       historyItems.push({
-        id: `recording:${recordingKey}`,
-        recording,
-        recordings: [recording]
+        id: `recording:${groupKey}`,
+        recording: sortedRecordings[0],
+        recordings: sortedRecordings
       });
     });
 
@@ -533,8 +608,16 @@ const Calls: React.FC = () => {
       .sort((a, b) => a.label.localeCompare(b.label));
   }, [analytics.call_logs, analytics.recordings, liveStatus.phone_users]);
 
+  const selectedUserOption = useMemo(
+    () => userOptions.find((option) => option.value === userFilter),
+    [userFilter, userOptions]
+  );
+
   const filteredHistory = useMemo(() => {
     const normalizedQuery = debouncedQuery.trim().toLowerCase();
+    const selectedUserTokens = selectedUserOption
+      ? buildUserFilterTokens([selectedUserOption.label, selectedUserOption.meta])
+      : [];
 
     return unifiedHistory.filter((item) => {
       const call = item.call;
@@ -572,11 +655,136 @@ const Calls: React.FC = () => {
       const matchesSearch = !normalizedQuery || searchable.includes(normalizedQuery);
       const matchesStatus = statusFilter === 'All' || getHistoryStatus(item) === statusFilter;
       const matchesDirection = directionFilter === 'All' || getHistoryDirection(item) === directionFilter;
-      const matchesUser = userFilter === 'All' || getHistoryUserFilterKey(item) === userFilter;
+      const historyUserTokens = buildUserFilterTokens([
+        getHistoryUserFilterKey(item),
+        getHistoryAgent(item),
+        getHistoryUserEmail(item),
+        call?.matched_user?.phone,
+        recording?.matched_user?.phone,
+        call?.owner?.phone_number,
+        call?.owner?.extension_number,
+        recording?.owner?.phone_number,
+        recording?.owner?.extension_number
+      ]);
+      const matchesUser =
+        userFilter === 'All' ||
+        getHistoryUserFilterKey(item) === userFilter ||
+        selectedUserTokens.some((selectedToken) =>
+          historyUserTokens.some((historyToken) => historyToken === selectedToken || historyToken.includes(selectedToken))
+        );
 
       return matchesSearch && matchesStatus && matchesDirection && matchesUser;
     });
-  }, [debouncedQuery, directionFilter, statusFilter, unifiedHistory, userFilter]);
+  }, [debouncedQuery, directionFilter, statusFilter, unifiedHistory, userFilter, selectedUserOption]);
+
+  const filteredReport = useMemo(() => {
+    const totalCalls = filteredHistory.length;
+    const incomingCalls = filteredHistory.filter((item) => isIncomingDirection(getHistoryDirection(item))).length;
+    const outgoingCalls = filteredHistory.filter((item) => isOutgoingDirection(getHistoryDirection(item))).length;
+    const missedCalls = filteredHistory.filter((item) => {
+      return isMissedHistoryItem(item);
+    }).length;
+    const connectedCalls = filteredHistory.filter((item) => {
+      return isConnectedHistoryItem(item);
+    }).length;
+    const totalTalkTime = filteredHistory.reduce((total, item) => total + getHistoryDuration(item), 0);
+    const recordingCount = filteredHistory.reduce((total, item) => total + getHistoryRecordingCount(item), 0);
+
+    return {
+      totalCalls,
+      incomingCalls,
+      outgoingCalls,
+      missedCalls,
+      connectedCalls,
+      totalTalkTime,
+      recordingCount,
+      averageCallDuration: totalCalls ? Math.round(totalTalkTime / totalCalls) : 0,
+      answerRate: totalCalls ? Math.round((connectedCalls / totalCalls) * 100) : 0
+    };
+  }, [filteredHistory]);
+
+  const filteredAgentStats = useMemo(() => {
+    const stats = new Map<
+      string,
+      {
+        agent: string;
+        email?: string;
+        total_calls: number;
+        connected_calls: number;
+        missed_calls: number;
+        total_duration: number;
+        recordings: number;
+      }
+    >();
+
+    filteredHistory.forEach((item) => {
+      const key = getHistoryUserFilterKey(item);
+      const current =
+        stats.get(key) ||
+        {
+          agent: getHistoryAgent(item),
+          email: getHistoryUserEmail(item),
+          total_calls: 0,
+          connected_calls: 0,
+          missed_calls: 0,
+          total_duration: 0,
+          recordings: 0
+        };
+      current.total_calls += 1;
+      current.total_duration += getHistoryDuration(item);
+      current.recordings += getHistoryRecordingCount(item);
+      if (isConnectedHistoryItem(item)) current.connected_calls += 1;
+      if (isMissedHistoryItem(item)) current.missed_calls += 1;
+      stats.set(key, current);
+    });
+
+    return Array.from(stats.values())
+      .map((agent) => ({
+        ...agent,
+        average_call_duration: agent.total_calls ? Math.round(agent.total_duration / agent.total_calls) : 0,
+        answer_rate: agent.total_calls ? Math.round((agent.connected_calls / agent.total_calls) * 100) : 0
+      }))
+      .sort((left, right) => right.total_calls - left.total_calls);
+  }, [filteredHistory]);
+
+  const filteredDailyStats = useMemo(() => {
+    const stats = new Map<
+      string,
+      {
+        date: string;
+        total_calls: number;
+        incoming_calls: number;
+        outgoing_calls: number;
+        connected_calls: number;
+        recorded_calls: number;
+      }
+    >();
+
+    filteredHistory.forEach((item) => {
+      const startedAt = getHistoryStartedAt(item);
+      const date = startedAt && !Number.isNaN(new Date(startedAt).getTime())
+        ? formatDateInput(new Date(startedAt))
+        : 'Unknown date';
+      const current =
+        stats.get(date) ||
+        {
+          date,
+          total_calls: 0,
+          incoming_calls: 0,
+          outgoing_calls: 0,
+          connected_calls: 0,
+          recorded_calls: 0
+        };
+      current.total_calls += 1;
+      if (isIncomingDirection(getHistoryDirection(item))) current.incoming_calls += 1;
+      if (isOutgoingDirection(getHistoryDirection(item))) current.outgoing_calls += 1;
+      if (isConnectedHistoryItem(item)) current.connected_calls += 1;
+      if (hasHistoryRecording(item)) current.recorded_calls += getHistoryRecordingCount(item);
+      stats.set(date, current);
+    });
+
+    return Array.from(stats.values()).sort((left, right) => right.date.localeCompare(left.date));
+  }, [filteredHistory]);
 
   useEffect(() => {
     if (filteredHistory.length === 0) {
@@ -589,8 +797,16 @@ const Calls: React.FC = () => {
     }
   }, [filteredHistory, selectedId]);
 
+  useEffect(() => {
+    setSelectedId(null);
+    setAudioUrl(null);
+    setAudioCallId(null);
+    setAudioLoadProgress(0);
+    setAudioLoadStatus('');
+    setRecordingLoading(false);
+  }, [debouncedQuery, directionFilter, fromDate, statusFilter, toDate, userFilter]);
+
   const selectedHistoryItem = filteredHistory.find((item) => item.id === selectedId) || filteredHistory[0];
-  const summary = analytics.summary;
   const liveInventory = liveStatus.inventory.summary.total_numbers > 0 ? liveStatus.inventory : inventory;
   const liveInventorySummary = liveInventory.summary;
   const unassignedQueueCount = callQueueLeads.filter((lead) => !lead.assignedTo && !lead.assignedToUser).length;
@@ -741,50 +957,50 @@ const Calls: React.FC = () => {
   const historyCards = [
     {
       label: 'Total Calls',
-      value: summary.total_calls,
-      helper: `${analytics.pages_scanned} Zoom page${analytics.pages_scanned === 1 ? '' : 's'} scanned`,
+      value: filteredReport.totalCalls,
+      helper: userFilter === 'All' ? `${analytics.pages_scanned} Zoom page${analytics.pages_scanned === 1 ? '' : 's'} scanned` : 'Filtered user report',
       icon: PhoneCall,
       tone: 'metric-card--blue'
     },
     {
       label: 'Incoming',
-      value: summary.incoming_calls,
+      value: filteredReport.incomingCalls,
       helper: 'Customer calls received',
       icon: Headphones,
       tone: 'metric-card--green'
     },
     {
       label: 'Outgoing',
-      value: summary.outgoing_calls,
+      value: filteredReport.outgoingCalls,
       helper: 'Agent calls placed',
       icon: BarChart3,
       tone: 'metric-card--amber'
     },
     {
       label: 'Missed',
-      value: summary.missed_calls,
+      value: filteredReport.missedCalls,
       helper: 'Needs callback follow-up',
       icon: Voicemail,
       tone: 'metric-card--rose'
     },
     {
       label: 'Answer Rate',
-      value: `${summary.answer_rate}%`,
-      helper: `${summary.connected_calls} connected calls`,
+      value: `${filteredReport.answerRate}%`,
+      helper: `${filteredReport.connectedCalls} connected calls`,
       icon: CheckCircle,
       tone: 'metric-card--green'
     },
     {
       label: 'Avg Duration',
-      value: formatDuration(summary.average_call_duration),
-      helper: `${formatTalkTime(summary.total_talk_time)} total talk time`,
+      value: formatDuration(filteredReport.averageCallDuration),
+      helper: `${formatTalkTime(filteredReport.totalTalkTime)} total talk time`,
       icon: Clock,
       tone: 'metric-card--blue'
     },
     {
       label: 'Recordings',
-      value: analytics.recordings.length || summary.recorded_calls,
-      helper: `${analytics.recordings.length} recording files synced`,
+      value: filteredReport.recordingCount,
+      helper: `${filteredReport.recordingCount} recording file${filteredReport.recordingCount === 1 ? '' : 's'} matched`,
       icon: Mic,
       tone: 'metric-card--amber'
     }
@@ -1100,6 +1316,43 @@ const Calls: React.FC = () => {
             </div>
           </div>
 
+          {selectedUserOption && (
+            <div className="card">
+              <div className="card-body">
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                  <div className="flex items-center gap-3">
+                    <span className="avatar">
+                      <UserRound className="h-4 w-4" />
+                    </span>
+                    <div>
+                      <p className="text-xs font-bold uppercase text-gray-500">Selected user report</p>
+                      <h2 className="text-lg font-extrabold text-gray-950">{selectedUserOption.label}</h2>
+                      <p className="text-sm text-gray-500">{selectedUserOption.meta}</p>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
+                    <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                      <p className="font-extrabold text-gray-950">{filteredReport.totalCalls}</p>
+                      <p className="text-gray-500">Calls</p>
+                    </div>
+                    <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                      <p className="font-extrabold text-gray-950">{filteredReport.connectedCalls}</p>
+                      <p className="text-gray-500">Connected</p>
+                    </div>
+                    <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                      <p className="font-extrabold text-gray-950">{formatTalkTime(filteredReport.totalTalkTime)}</p>
+                      <p className="text-gray-500">Talk time</p>
+                    </div>
+                    <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                      <p className="font-extrabold text-gray-950">{filteredReport.answerRate}%</p>
+                      <p className="text-gray-500">Answer rate</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
           <div className="metric-grid">
             {historyCards.map((metric) => {
               const Icon = metric.icon;
@@ -1390,14 +1643,12 @@ const Calls: React.FC = () => {
                 </div>
               </div>
               <div className="card-body space-y-3">
-                {analytics.agent_stats.map((agent) => (
+                {filteredAgentStats.map((agent) => (
                   <div key={agent.agent} className="rounded-lg border border-gray-200 p-4">
                     <div className="flex items-start justify-between gap-3">
                       <div>
                         <p className="font-extrabold text-gray-950">{agent.agent}</p>
-                        <p className="text-sm text-gray-500">
-                          {agent.extension_number ? `Ext ${agent.extension_number}` : agent.phone_number || 'Zoom Phone'}
-                        </p>
+                        <p className="text-sm text-gray-500">{agent.email || 'Zoom Phone'}</p>
                       </div>
                       <span className="status-pill status-pill--blue">{agent.total_calls} calls</span>
                     </div>
@@ -1421,7 +1672,7 @@ const Calls: React.FC = () => {
                     </div>
                   </div>
                 ))}
-                {analytics.agent_stats.length === 0 && <p className="text-sm text-gray-500">No user performance records in this range.</p>}
+                {filteredAgentStats.length === 0 && <p className="text-sm text-gray-500">No user performance records in this range.</p>}
               </div>
             </div>
 
@@ -1433,7 +1684,7 @@ const Calls: React.FC = () => {
                 </div>
               </div>
               <div className="card-body space-y-3">
-                {analytics.daily_stats.map((day) => (
+                {filteredDailyStats.map((day) => (
                   <div key={day.date} className="rounded-lg border border-gray-200 p-4">
                     <div className="flex items-center justify-between">
                       <p className="font-extrabold text-gray-950">{day.date}</p>
@@ -1442,7 +1693,7 @@ const Calls: React.FC = () => {
                     <div className="mt-3 h-2 overflow-hidden rounded-full bg-gray-100">
                       <div
                         className="h-full rounded-full bg-blue-600"
-                        style={{ width: `${summary.total_calls ? Math.min((day.total_calls / summary.total_calls) * 100, 100) : 0}%` }}
+                        style={{ width: `${filteredReport.totalCalls ? Math.min((day.total_calls / filteredReport.totalCalls) * 100, 100) : 0}%` }}
                       />
                     </div>
                     <div className="mt-3 grid grid-cols-4 gap-3 text-xs text-gray-500">
@@ -1453,7 +1704,7 @@ const Calls: React.FC = () => {
                     </div>
                   </div>
                 ))}
-                {analytics.daily_stats.length === 0 && <p className="text-sm text-gray-500">No daily trend records in this range.</p>}
+                {filteredDailyStats.length === 0 && <p className="text-sm text-gray-500">No daily trend records in this range.</p>}
               </div>
             </div>
           </div>
