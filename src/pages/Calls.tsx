@@ -340,6 +340,7 @@ const getStatusText = (status?: string) => (status || '').trim().toLowerCase();
 
 const isConnectedHistoryItem = (item: UnifiedCallHistoryItem) => {
   const status = getStatusText(item.call ? getCallStatus(item.call) : undefined);
+  if ((!status || status === 'unknown') && item.call && getHistoryRecordingCount(item) > 0) return true;
   if (!status) return false;
   return (
     status.includes('connect') ||
@@ -363,6 +364,48 @@ const buildUserFilterTokens = (values: Array<string | undefined>) =>
       return phone ? [normalized, phone] : [normalized];
     })
     .filter(Boolean);
+
+const getOptionNameKey = (value?: string) => String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
+
+const userOptionLooksDuplicate = (
+  option: { value: string; label: string; meta: string },
+  canonicalOptions: Array<{ value: string; label: string; meta: string }>
+) => {
+  if (option.value.startsWith('crm:')) return false;
+
+  const optionName = getOptionNameKey(option.label);
+  const optionTokens = buildUserFilterTokens([option.label, option.meta]);
+
+  return canonicalOptions.some((canonical) => {
+    const canonicalName = getOptionNameKey(canonical.label);
+    const canonicalTokens = buildUserFilterTokens([canonical.label, canonical.meta]);
+    return (
+      optionName === canonicalName ||
+      (canonicalName.length >= 3 && optionName.includes(canonicalName)) ||
+      (optionName.length >= 3 && canonicalName.includes(optionName)) ||
+      optionTokens.some((token) =>
+        canonicalTokens.some((canonicalToken) => token === canonicalToken || token.includes(canonicalToken) || canonicalToken.includes(token))
+      )
+    );
+  });
+};
+
+const getHistoryCustomerNumber = (item: UnifiedCallHistoryItem) => {
+  const direction = getHistoryDirection(item);
+  const call = item.call;
+  const recording = getHistoryPrimaryRecording(item);
+
+  const value = isOutgoingDirection(direction)
+    ? call?.callee_number || call?.callee_phone_number || recording?.callee_number || getHistoryPhone(item)
+    : isIncomingDirection(direction)
+      ? call?.caller_number || call?.caller_phone_number || recording?.caller_number || getHistoryPhone(item)
+      : call?.display_phone || recording?.matched_lead?.phone || getHistoryPhone(item);
+
+  return normalizeMatchPhone(value) || getHistoryPhone(item).toLowerCase();
+};
+
+const countUniqueCustomers = (items: UnifiedCallHistoryItem[]) =>
+  new Set(items.map(getHistoryCustomerNumber).filter(Boolean)).size;
 
 const getMetricCallAgent = (call: ZoomPhoneMetricCall) =>
   call.matched_user?.name || call.caller?.name || call.callee?.name || call.owner?.name || 'Zoom user';
@@ -390,6 +433,8 @@ const Calls: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState('All');
   const [directionFilter, setDirectionFilter] = useState('All');
   const [userFilter, setUserFilter] = useState('All');
+  const [historyPage, setHistoryPage] = useState(1);
+  const [historyPageSize, setHistoryPageSize] = useState(15);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [callQueueLeads, setCallQueueLeads] = useState<Lead[]>([]);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
@@ -399,6 +444,7 @@ const Calls: React.FC = () => {
   const [audioLoadStatus, setAudioLoadStatus] = useState('');
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const recordingPanelRef = useRef<HTMLDivElement | null>(null);
+  const fetchRequestRef = useRef(0);
   const debouncedQuery = useDebouncedValue(query, 220);
 
   const setActiveView = (view: 'live' | 'history') => {
@@ -412,6 +458,8 @@ const Calls: React.FC = () => {
   };
 
   const fetchData = useCallback(async () => {
+    const requestId = fetchRequestRef.current + 1;
+    fetchRequestRef.current = requestId;
     setLoading(true);
     setZoomError(null);
 
@@ -459,7 +507,8 @@ const Calls: React.FC = () => {
           from: fromDate,
           to: toDate,
           pageSize: 300,
-          maxPages: 5
+          maxPages: 5,
+          includeRecordings: false
         }),
         zoomPhoneApi.getInventory({
           pageSize: 300,
@@ -475,6 +524,36 @@ const Calls: React.FC = () => {
 
       if (analyticsResponse.success && analyticsResponse.data) {
         setAnalytics(analyticsResponse.data);
+
+        zoomPhoneApi
+          .getAccountRecordings({
+            from: fromDate,
+            to: toDate,
+            pageSize: 300,
+            maxPages: 5
+          })
+          .then((recordingsResponse) => {
+            if (fetchRequestRef.current !== requestId) return;
+            if (recordingsResponse.success && recordingsResponse.data) {
+              setAnalytics((current) => ({
+                ...current,
+                recordings: recordingsResponse.data?.recordings || [],
+                recordings_error: undefined
+              }));
+            } else {
+              setAnalytics((current) => ({
+                ...current,
+                recordings_error: recordingsResponse.message || 'Unable to sync Zoom Phone recordings'
+              }));
+            }
+          })
+          .catch((error) => {
+            if (fetchRequestRef.current !== requestId) return;
+            setAnalytics((current) => ({
+              ...current,
+              recordings_error: error instanceof Error ? error.message : 'Unable to sync Zoom Phone recordings'
+            }));
+          });
       } else {
         setAnalytics(emptyAnalytics);
         setZoomError(analyticsResponse.message || 'Unable to sync Zoom Phone call history');
@@ -572,39 +651,60 @@ const Calls: React.FC = () => {
 
   const userOptions = useMemo(() => {
     const options = new Map<string, { label: string; meta: string }>();
+    const addOption = (value: string, label: string, meta: string) => {
+      const normalizedLabel = label.trim() || 'Zoom user';
+      const normalizedMeta = meta.trim() || 'Zoom Phone';
+      const duplicate = Array.from(options.entries()).find(([, existing]) => {
+        const sameName = getOptionNameKey(existing.label) === getOptionNameKey(normalizedLabel);
+        const existingTokens = buildUserFilterTokens([existing.label, existing.meta]);
+        const nextTokens = buildUserFilterTokens([normalizedLabel, normalizedMeta]);
+        return (
+          sameName ||
+          nextTokens.some((token) =>
+            existingTokens.some((existingToken) => token === existingToken || token.includes(existingToken) || existingToken.includes(token))
+          )
+        );
+      });
+
+      if (duplicate && !value.startsWith('crm:')) return;
+      if (duplicate && value.startsWith('crm:') && !duplicate[0].startsWith('crm:')) {
+        options.delete(duplicate[0]);
+      }
+      if (!options.has(value)) {
+        options.set(value, { label: normalizedLabel, meta: normalizedMeta });
+      }
+    };
 
     analytics.call_logs.forEach((call) => {
       const key = getCallUserFilterKey(call);
-      if (!options.has(key)) {
-        options.set(key, {
-          label: getCallAgent(call),
-          meta: call.matched_user?.email || call.owner?.phone_number || call.owner?.extension_number || 'Zoom Phone'
-        });
-      }
+      addOption(key, getCallAgent(call), call.matched_user?.email || call.owner?.phone_number || call.owner?.extension_number || 'Zoom Phone');
     });
 
     analytics.recordings.forEach((recording) => {
       const key = getRecordingUserFilterKey(recording);
-      if (!options.has(key)) {
-        options.set(key, {
-          label: getRecordingOwner(recording),
-          meta: recording.matched_user?.email || recording.owner?.phone_number || recording.owner?.extension_number || 'Zoom Phone'
-        });
-      }
+      addOption(
+        key,
+        recording.matched_user?.name || getRecordingOwner(recording),
+        recording.matched_user?.email || recording.owner?.phone_number || recording.owner?.extension_number || 'Zoom Phone'
+      );
     });
 
     liveStatus.phone_users.forEach((phoneUser) => {
       const key = phoneUser.matched_user?.id ? `crm:${phoneUser.matched_user.id}` : `zoom:${phoneUser.name || phoneUser.email}`;
-      if (!options.has(key)) {
-        options.set(key, {
-          label: phoneUser.matched_user?.name || phoneUser.name || phoneUser.email || 'Zoom user',
-          meta: phoneUser.matched_user?.email || phoneUser.email || phoneUser.connected_numbers.join(', ') || 'Zoom Phone'
-        });
-      }
+      addOption(
+        key,
+        phoneUser.matched_user?.name || phoneUser.name || phoneUser.email || 'Zoom user',
+        phoneUser.matched_user?.email || phoneUser.email || phoneUser.connected_numbers.join(', ') || 'Zoom Phone'
+      );
     });
 
-    return Array.from(options.entries())
+    const preparedOptions = Array.from(options.entries())
       .map(([value, option]) => ({ value, ...option }))
+      .sort((a, b) => Number(b.value.startsWith('crm:')) - Number(a.value.startsWith('crm:')));
+    const canonicalOptions = preparedOptions.filter((option) => option.value.startsWith('crm:'));
+
+    return preparedOptions
+      .filter((option) => !userOptionLooksDuplicate(option, canonicalOptions))
       .sort((a, b) => a.label.localeCompare(b.label));
   }, [analytics.call_logs, analytics.recordings, liveStatus.phone_users]);
 
@@ -612,6 +712,16 @@ const Calls: React.FC = () => {
     () => userOptions.find((option) => option.value === userFilter),
     [userFilter, userOptions]
   );
+
+  useEffect(() => {
+    if (userFilter !== 'All' && !selectedUserOption) {
+      setUserFilter('All');
+    }
+  }, [selectedUserOption, userFilter]);
+
+  useEffect(() => {
+    setHistoryPage(1);
+  }, [debouncedQuery, directionFilter, fromDate, statusFilter, toDate, userFilter, historyPageSize]);
 
   const filteredHistory = useMemo(() => {
     const normalizedQuery = debouncedQuery.trim().toLowerCase();
@@ -678,22 +788,25 @@ const Calls: React.FC = () => {
   }, [debouncedQuery, directionFilter, statusFilter, unifiedHistory, userFilter, selectedUserOption]);
 
   const filteredReport = useMemo(() => {
-    const totalCalls = filteredHistory.length;
-    const incomingCalls = filteredHistory.filter((item) => isIncomingDirection(getHistoryDirection(item))).length;
-    const outgoingCalls = filteredHistory.filter((item) => isOutgoingDirection(getHistoryDirection(item))).length;
-    const missedCalls = filteredHistory.filter((item) => {
-      return isMissedHistoryItem(item);
-    }).length;
-    const connectedCalls = filteredHistory.filter((item) => {
-      return isConnectedHistoryItem(item);
-    }).length;
+    const incomingItems = filteredHistory.filter((item) => isIncomingDirection(getHistoryDirection(item)));
+    const outgoingItems = filteredHistory.filter((item) => isOutgoingDirection(getHistoryDirection(item)));
+    const missedItems = filteredHistory.filter((item) => isMissedHistoryItem(item));
+    const connectedItems = filteredHistory.filter((item) => isConnectedHistoryItem(item));
+    const totalCalls = countUniqueCustomers(filteredHistory);
+    const incomingCalls = countUniqueCustomers(incomingItems);
+    const outgoingCalls = countUniqueCustomers(outgoingItems);
+    const missedCalls = countUniqueCustomers(missedItems);
+    const connectedCalls = countUniqueCustomers(connectedItems);
     const totalTalkTime = filteredHistory.reduce((total, item) => total + getHistoryDuration(item), 0);
     const recordingCount = filteredHistory.reduce((total, item) => total + getHistoryRecordingCount(item), 0);
 
     return {
       totalCalls,
+      totalCallAttempts: filteredHistory.length,
       incomingCalls,
+      incomingCallAttempts: incomingItems.length,
       outgoingCalls,
+      outgoingCallAttempts: outgoingItems.length,
       missedCalls,
       connectedCalls,
       totalTalkTime,
@@ -702,6 +815,11 @@ const Calls: React.FC = () => {
       answerRate: totalCalls ? Math.round((connectedCalls / totalCalls) * 100) : 0
     };
   }, [filteredHistory]);
+
+  const historyTotalPages = Math.max(1, Math.ceil(filteredHistory.length / historyPageSize));
+  const safeHistoryPage = Math.min(historyPage, historyTotalPages);
+  const historyStartIndex = filteredHistory.length === 0 ? 0 : (safeHistoryPage - 1) * historyPageSize;
+  const paginatedHistory = filteredHistory.slice(historyStartIndex, historyStartIndex + historyPageSize);
 
   const filteredAgentStats = useMemo(() => {
     const stats = new Map<
@@ -714,11 +832,16 @@ const Calls: React.FC = () => {
         missed_calls: number;
         total_duration: number;
         recordings: number;
+        total_numbers: Set<string>;
+        connected_numbers: Set<string>;
+        missed_numbers: Set<string>;
+        recording_numbers: Set<string>;
       }
     >();
 
     filteredHistory.forEach((item) => {
       const key = getHistoryUserFilterKey(item);
+      const customerNumber = getHistoryCustomerNumber(item);
       const current =
         stats.get(key) ||
         {
@@ -728,21 +851,31 @@ const Calls: React.FC = () => {
           connected_calls: 0,
           missed_calls: 0,
           total_duration: 0,
-          recordings: 0
+          recordings: 0,
+          total_numbers: new Set<string>(),
+          connected_numbers: new Set<string>(),
+          missed_numbers: new Set<string>(),
+          recording_numbers: new Set<string>()
         };
-      current.total_calls += 1;
+      if (customerNumber) current.total_numbers.add(customerNumber);
       current.total_duration += getHistoryDuration(item);
-      current.recordings += getHistoryRecordingCount(item);
-      if (isConnectedHistoryItem(item)) current.connected_calls += 1;
-      if (isMissedHistoryItem(item)) current.missed_calls += 1;
+      if (isConnectedHistoryItem(item) && customerNumber) current.connected_numbers.add(customerNumber);
+      if (isMissedHistoryItem(item) && customerNumber) current.missed_numbers.add(customerNumber);
+      if (hasHistoryRecording(item) && customerNumber) current.recording_numbers.add(customerNumber);
       stats.set(key, current);
     });
 
     return Array.from(stats.values())
       .map((agent) => ({
-        ...agent,
-        average_call_duration: agent.total_calls ? Math.round(agent.total_duration / agent.total_calls) : 0,
-        answer_rate: agent.total_calls ? Math.round((agent.connected_calls / agent.total_calls) * 100) : 0
+        agent: agent.agent,
+        email: agent.email,
+        total_calls: agent.total_numbers.size,
+        connected_calls: agent.connected_numbers.size,
+        missed_calls: agent.missed_numbers.size,
+        recordings: agent.recording_numbers.size,
+        total_duration: agent.total_duration,
+        average_call_duration: agent.total_numbers.size ? Math.round(agent.total_duration / agent.total_numbers.size) : 0,
+        answer_rate: agent.total_numbers.size ? Math.round((agent.connected_numbers.size / agent.total_numbers.size) * 100) : 0
       }))
       .sort((left, right) => right.total_calls - left.total_calls);
   }, [filteredHistory]);
@@ -757,6 +890,11 @@ const Calls: React.FC = () => {
         outgoing_calls: number;
         connected_calls: number;
         recorded_calls: number;
+        total_numbers: Set<string>;
+        incoming_numbers: Set<string>;
+        outgoing_numbers: Set<string>;
+        connected_numbers: Set<string>;
+        recorded_numbers: Set<string>;
       }
     >();
 
@@ -765,6 +903,7 @@ const Calls: React.FC = () => {
       const date = startedAt && !Number.isNaN(new Date(startedAt).getTime())
         ? formatDateInput(new Date(startedAt))
         : 'Unknown date';
+      const customerNumber = getHistoryCustomerNumber(item);
       const current =
         stats.get(date) ||
         {
@@ -773,17 +912,31 @@ const Calls: React.FC = () => {
           incoming_calls: 0,
           outgoing_calls: 0,
           connected_calls: 0,
-          recorded_calls: 0
+          recorded_calls: 0,
+          total_numbers: new Set<string>(),
+          incoming_numbers: new Set<string>(),
+          outgoing_numbers: new Set<string>(),
+          connected_numbers: new Set<string>(),
+          recorded_numbers: new Set<string>()
         };
-      current.total_calls += 1;
-      if (isIncomingDirection(getHistoryDirection(item))) current.incoming_calls += 1;
-      if (isOutgoingDirection(getHistoryDirection(item))) current.outgoing_calls += 1;
-      if (isConnectedHistoryItem(item)) current.connected_calls += 1;
-      if (hasHistoryRecording(item)) current.recorded_calls += getHistoryRecordingCount(item);
+      if (customerNumber) current.total_numbers.add(customerNumber);
+      if (isIncomingDirection(getHistoryDirection(item)) && customerNumber) current.incoming_numbers.add(customerNumber);
+      if (isOutgoingDirection(getHistoryDirection(item)) && customerNumber) current.outgoing_numbers.add(customerNumber);
+      if (isConnectedHistoryItem(item) && customerNumber) current.connected_numbers.add(customerNumber);
+      if (hasHistoryRecording(item) && customerNumber) current.recorded_numbers.add(customerNumber);
       stats.set(date, current);
     });
 
-    return Array.from(stats.values()).sort((left, right) => right.date.localeCompare(left.date));
+    return Array.from(stats.values())
+      .map((day) => ({
+        date: day.date,
+        total_calls: day.total_numbers.size,
+        incoming_calls: day.incoming_numbers.size,
+        outgoing_calls: day.outgoing_numbers.size,
+        connected_calls: day.connected_numbers.size,
+        recorded_calls: day.recorded_numbers.size
+      }))
+      .sort((left, right) => right.date.localeCompare(left.date));
   }, [filteredHistory]);
 
   useEffect(() => {
@@ -796,6 +949,12 @@ const Calls: React.FC = () => {
       setSelectedId(filteredHistory[0].id);
     }
   }, [filteredHistory, selectedId]);
+
+  useEffect(() => {
+    if (historyPage > historyTotalPages) {
+      setHistoryPage(historyTotalPages);
+    }
+  }, [historyPage, historyTotalPages]);
 
   useEffect(() => {
     setSelectedId(null);
@@ -958,21 +1117,21 @@ const Calls: React.FC = () => {
     {
       label: 'Total Calls',
       value: filteredReport.totalCalls,
-      helper: userFilter === 'All' ? `${analytics.pages_scanned} Zoom page${analytics.pages_scanned === 1 ? '' : 's'} scanned` : 'Filtered user report',
+      helper: `Including duplicate calls: ${filteredReport.totalCallAttempts}`,
       icon: PhoneCall,
       tone: 'metric-card--blue'
     },
     {
       label: 'Incoming',
       value: filteredReport.incomingCalls,
-      helper: 'Customer calls received',
+      helper: `Including duplicate calls: ${filteredReport.incomingCallAttempts}`,
       icon: Headphones,
       tone: 'metric-card--green'
     },
     {
       label: 'Outgoing',
       value: filteredReport.outgoingCalls,
-      helper: 'Agent calls placed',
+      helper: `Including duplicate calls: ${filteredReport.outgoingCallAttempts}`,
       icon: BarChart3,
       tone: 'metric-card--amber'
     },
@@ -1375,7 +1534,8 @@ const Calls: React.FC = () => {
                 <div>
                   <h2 className="card-title">Call History</h2>
                   <p className="card-subtitle">
-                    {filteredHistory.length} calls and recordings from {fromDate} to {toDate}
+                    Showing {filteredHistory.length === 0 ? 0 : historyStartIndex + 1}-
+                    {Math.min(historyStartIndex + historyPageSize, filteredHistory.length)} of {filteredHistory.length} call logs from {fromDate} to {toDate}
                   </p>
                 </div>
                 <span className="status-pill status-pill--slate">{unifiedHistory.length} synced</span>
@@ -1393,7 +1553,7 @@ const Calls: React.FC = () => {
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredHistory.map((item) => {
+                    {paginatedHistory.map((item) => {
                       const recordingCount = getHistoryRecordingCount(item);
                       return (
                         <tr
@@ -1415,7 +1575,10 @@ const Calls: React.FC = () => {
                             </div>
                           </td>
                           <td data-label="Direction">
-                            <span className={directionClass(getHistoryDirection(item))}>{getHistoryDirection(item)}</span>
+                            <div className="space-y-1">
+                              <span className={directionClass(getHistoryDirection(item))}>{getHistoryDirection(item)}</span>
+                              <p className="text-[11px] font-medium leading-snug text-gray-400">{formatDateTime(getHistoryStartedAt(item))}</p>
+                            </div>
                           </td>
                           <td data-label="Status">
                             <span className={statusClass(getHistoryStatus(item))}>{getHistoryStatus(item)}</span>
@@ -1440,6 +1603,48 @@ const Calls: React.FC = () => {
                   </tbody>
                 </table>
               </div>
+              {filteredHistory.length > 0 && (
+                <div className="flex flex-col gap-3 border-t border-gray-200 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex items-center gap-2 text-sm text-gray-600">
+                    <span>Rows per page</span>
+                    <select
+                      className="form-input h-9 w-24 py-1 text-sm"
+                      value={historyPageSize}
+                      onChange={(event) => setHistoryPageSize(Number(event.target.value))}
+                      aria-label="Call history rows per page"
+                    >
+                      {[10, 15, 25, 50].map((size) => (
+                        <option key={size} value={size}>
+                          {size}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="flex items-center justify-between gap-3 sm:justify-end">
+                    <p className="text-sm font-medium text-gray-600">
+                      Page {safeHistoryPage} of {historyTotalPages}
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        className="btn btn-secondary h-9 px-3"
+                        onClick={() => setHistoryPage((page) => Math.max(1, page - 1))}
+                        disabled={safeHistoryPage === 1}
+                      >
+                        Previous
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-secondary h-9 px-3"
+                        onClick={() => setHistoryPage((page) => Math.min(historyTotalPages, page + 1))}
+                        disabled={safeHistoryPage === historyTotalPages}
+                      >
+                        Next
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
               {!loading && filteredHistory.length === 0 && (
                 <div className="py-12 text-center">
                   <Mic className="mx-auto mb-3 h-10 w-10 text-gray-300" />

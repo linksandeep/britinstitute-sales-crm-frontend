@@ -1056,6 +1056,7 @@ interface ZoomPhoneQuery {
   nextPageToken?: string;
   pageSize?: number;
   maxPages?: number;
+  includeRecordings?: boolean;
 }
 
 const appendZoomPhoneQuery = (params: URLSearchParams, query?: ZoomPhoneQuery) => {
@@ -1066,6 +1067,7 @@ const appendZoomPhoneQuery = (params: URLSearchParams, query?: ZoomPhoneQuery) =
   if (query.nextPageToken) params.append('nextPageToken', query.nextPageToken);
   if (query.pageSize) params.append('pageSize', query.pageSize.toString());
   if (query.maxPages) params.append('maxPages', query.maxPages.toString());
+  if (query.includeRecordings !== undefined) params.append('includeRecordings', String(query.includeRecordings));
 };
 
 export const zoomPhoneApi = {
