@@ -240,10 +240,12 @@ type UnifiedCallHistoryItem = {
   recordings: ZoomPhoneRecording[];
 };
 
-const normalizeMatchPhone = (value?: string) => (value || '').replace(/\D/g, '');
+const toSafeString = (value: unknown) => (value == null ? '' : String(value));
 
-const uniqueStrings = (values: Array<string | undefined>) =>
-  Array.from(new Set(values.map((value) => (value || '').trim()).filter(Boolean)));
+const normalizeMatchPhone = (value?: unknown) => toSafeString(value).replace(/\D/g, '');
+
+const uniqueStrings = (values: unknown[]) =>
+  Array.from(new Set(values.map((value) => toSafeString(value).trim()).filter(Boolean)));
 
 const getCallIdentifierValues = (call: ZoomPhoneCallLog) =>
   uniqueStrings([call.id, call.call_id, call.recording_id, getCallKey(call)]);
@@ -350,6 +352,17 @@ const getHistoryLeadEmail = (item: UnifiedCallHistoryItem) => item.call?.matched
 
 const getHistoryUserEmail = (item: UnifiedCallHistoryItem) => item.call?.matched_user?.email || item.recording?.matched_user?.email;
 
+const getHistoryMatchedUser = (item: UnifiedCallHistoryItem) => item.call?.matched_user || item.recording?.matched_user;
+
+const InactiveUserDot = ({ inactive }: { inactive?: boolean }) =>
+  inactive ? (
+    <span
+      className="inline-block h-2 w-2 rounded-full bg-red-500 align-middle ring-2 ring-red-100"
+      title="Deactivated user"
+      aria-label="Deactivated user"
+    />
+  ) : null;
+
 const getHistoryRecordingCount = (item: UnifiedCallHistoryItem) => {
   if (item.recordings.length > 0) return item.recordings.length;
   if (item.call?.has_recording || item.call?.recording_download_url || item.call?.recording_id) {
@@ -379,9 +392,9 @@ const isMissedHistoryItem = (item: UnifiedCallHistoryItem) => {
   return status.includes('miss') || status.includes('failed') || status.includes('no answer') || status.includes('abandoned');
 };
 
-const buildUserFilterTokens = (values: Array<string | undefined>) =>
+const buildUserFilterTokens = (values: unknown[]) =>
   values
-    .flatMap((value) => String(value || '').split(','))
+    .flatMap((value) => toSafeString(value).split(','))
     .flatMap((value) => {
       const normalized = value.trim().toLowerCase();
       const phone = normalizeMatchPhone(value);
@@ -389,7 +402,7 @@ const buildUserFilterTokens = (values: Array<string | undefined>) =>
     })
     .filter(Boolean);
 
-const getOptionNameKey = (value?: string) => String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
+const getOptionNameKey = (value?: unknown) => toSafeString(value).trim().toLowerCase().replace(/\s+/g, ' ');
 
 const userOptionLooksDuplicate = (
   option: { value: string; label: string; meta: string },
@@ -674,10 +687,10 @@ const Calls: React.FC = () => {
   );
 
   const userOptions = useMemo(() => {
-    const options = new Map<string, { label: string; meta: string }>();
-    const addOption = (value: string, label: string, meta: string) => {
-      const normalizedLabel = label.trim() || 'Zoom user';
-      const normalizedMeta = meta.trim() || 'Zoom Phone';
+    const options = new Map<string, { label: string; meta: string; inactive?: boolean }>();
+    const addOption = (value: string, label: unknown, meta: unknown, inactive?: boolean) => {
+      const normalizedLabel = toSafeString(label).trim() || 'Zoom user';
+      const normalizedMeta = toSafeString(meta).trim() || 'Zoom Phone';
       const duplicate = Array.from(options.entries()).find(([, existing]) => {
         const sameName = getOptionNameKey(existing.label) === getOptionNameKey(normalizedLabel);
         const existingTokens = buildUserFilterTokens([existing.label, existing.meta]);
@@ -695,13 +708,18 @@ const Calls: React.FC = () => {
         options.delete(duplicate[0]);
       }
       if (!options.has(value)) {
-        options.set(value, { label: normalizedLabel, meta: normalizedMeta });
+        options.set(value, { label: normalizedLabel, meta: normalizedMeta, inactive });
       }
     };
 
     analytics.call_logs.forEach((call) => {
       const key = getCallUserFilterKey(call);
-      addOption(key, getCallAgent(call), call.matched_user?.email || call.owner?.phone_number || call.owner?.extension_number || 'Zoom Phone');
+      addOption(
+        key,
+        getCallAgent(call),
+        call.matched_user?.email || call.owner?.phone_number || call.owner?.extension_number || 'Zoom Phone',
+        call.matched_user?.isActive === false
+      );
     });
 
     analytics.recordings.forEach((recording) => {
@@ -709,7 +727,8 @@ const Calls: React.FC = () => {
       addOption(
         key,
         recording.matched_user?.name || getRecordingOwner(recording),
-        recording.matched_user?.email || recording.owner?.phone_number || recording.owner?.extension_number || 'Zoom Phone'
+        recording.matched_user?.email || recording.owner?.phone_number || recording.owner?.extension_number || 'Zoom Phone',
+        recording.matched_user?.isActive === false
       );
     });
 
@@ -718,7 +737,8 @@ const Calls: React.FC = () => {
       addOption(
         key,
         phoneUser.matched_user?.name || phoneUser.name || phoneUser.email || 'Zoom user',
-        phoneUser.matched_user?.email || phoneUser.email || phoneUser.connected_numbers.join(', ') || 'Zoom Phone'
+        phoneUser.matched_user?.email || phoneUser.email || phoneUser.connected_numbers.join(', ') || 'Zoom Phone',
+        phoneUser.matched_user?.isActive === false
       );
     });
 
@@ -1360,8 +1380,9 @@ const Calls: React.FC = () => {
                     <div key={phoneUser.id || phoneUser.phone_user_id || phoneUser.email} className="rounded-lg border border-gray-200 p-4">
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
-                          <p className="truncate font-extrabold text-gray-950">
-                            {phoneUser.matched_user?.name || phoneUser.name || phoneUser.email || 'Zoom user'}
+                          <p className="flex min-w-0 items-center gap-2 font-extrabold text-gray-950">
+                            <span className="truncate">{phoneUser.matched_user?.name || phoneUser.name || phoneUser.email || 'Zoom user'}</span>
+                            <InactiveUserDot inactive={phoneUser.matched_user?.isActive === false} />
                           </p>
                           <p className="mt-1 truncate text-sm text-gray-500">
                             {phoneUser.matched_user?.email || phoneUser.email || 'No email returned'}
@@ -1488,7 +1509,7 @@ const Calls: React.FC = () => {
                   <option value="All">All users</option>
                   {userOptions.map((option) => (
                     <option key={option.value} value={option.value}>
-                      {option.label}
+                      {option.inactive ? `${option.label} - inactive` : option.label}
                     </option>
                   ))}
                 </select>
@@ -1522,7 +1543,10 @@ const Calls: React.FC = () => {
                     </span>
                     <div>
                       <p className="text-xs font-bold uppercase text-gray-500">Selected user report</p>
-                      <h2 className="text-lg font-extrabold text-gray-950">{selectedUserOption.label}</h2>
+                      <h2 className="flex items-center gap-2 text-lg font-extrabold text-gray-950">
+                        <span>{selectedUserOption.label}</span>
+                        <InactiveUserDot inactive={selectedUserOption.inactive} />
+                      </h2>
                       <p className="text-sm text-gray-500">{selectedUserOption.meta}</p>
                     </div>
                   </div>
@@ -1624,7 +1648,10 @@ const Calls: React.FC = () => {
                           </td>
                           <td data-label="Duration">{formatDuration(getHistoryDuration(item))}</td>
                           <td data-label="User">
-                            <p className="font-semibold text-gray-800">{getHistoryAgent(item)}</p>
+                            <p className="flex items-center gap-2 font-semibold text-gray-800">
+                              <span>{getHistoryAgent(item)}</span>
+                              <InactiveUserDot inactive={getHistoryMatchedUser(item)?.isActive === false} />
+                            </p>
                             {getHistoryUserEmail(item) && <p className="text-xs text-gray-500">{getHistoryUserEmail(item)}</p>}
                           </td>
                           <td data-label="Recording">
@@ -1742,7 +1769,10 @@ const Calls: React.FC = () => {
                   <div className="call-detail-metrics">
                     <div className="rounded-lg border border-gray-200 p-3">
                       <p className="text-xs font-bold uppercase text-gray-500">User</p>
-                      <p className="mt-1 font-bold text-gray-900">{getHistoryAgent(selectedHistoryItem)}</p>
+                      <p className="mt-1 flex items-center gap-2 font-bold text-gray-900">
+                        <span>{getHistoryAgent(selectedHistoryItem)}</span>
+                        <InactiveUserDot inactive={getHistoryMatchedUser(selectedHistoryItem)?.isActive === false} />
+                      </p>
                     </div>
                     <div className="rounded-lg border border-gray-200 p-3">
                       <p className="text-xs font-bold uppercase text-gray-500">Duration</p>

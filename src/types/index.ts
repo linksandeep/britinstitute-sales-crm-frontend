@@ -255,6 +255,7 @@ export interface ZoomPhoneCrmUserMatch {
   name: string;
   email?: string;
   phone?: string;
+  isActive?: boolean;
 }
 
 export interface ZoomPhoneCrmLeadMatch {
