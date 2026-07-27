@@ -24,6 +24,9 @@ import type {
   ZoomPhoneLeadCallsResponse,
   ZoomPhoneLeadRecordingsResponse,
   ZoomPhoneLiveStatusResponse,
+  ZoomPhoneNumberAssignment,
+  ZoomPhoneNumberAssignmentRequest,
+  ZoomPhoneNumberAssignmentsResponse,
   ZoomPhoneStatus,
 
 } from '../types';
@@ -1074,6 +1077,29 @@ export const zoomPhoneApi = {
   getStatus: async (): Promise<ApiResponse<ZoomPhoneStatus>> => {
     try {
       const response = await api.get('/zoom-phone/status');
+      return handleResponse(response);
+    } catch (error) {
+      return handleError(error);
+    }
+  },
+  getAssignments: async (
+    options?: { active?: boolean }
+  ): Promise<ApiResponse<ZoomPhoneNumberAssignmentsResponse>> => {
+    try {
+      const params = new URLSearchParams();
+      if (options?.active !== undefined) params.append('active', String(options.active));
+      const queryString = params.toString();
+      const response = await api.get(`/zoom-phone/assignments${queryString ? `?${queryString}` : ''}`);
+      return handleResponse(response);
+    } catch (error) {
+      return handleError(error);
+    }
+  },
+  assignNumber: async (
+    payload: ZoomPhoneNumberAssignmentRequest
+  ): Promise<ApiResponse<ZoomPhoneNumberAssignment>> => {
+    try {
+      const response = await api.post('/zoom-phone/assignments', payload);
       return handleResponse(response);
     } catch (error) {
       return handleError(error);

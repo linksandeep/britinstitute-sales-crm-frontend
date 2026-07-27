@@ -550,6 +550,10 @@ a {
   box-shadow: var(--crm-shadow);
 }
 
+.metric-card--wide {
+  grid-column: span 2;
+}
+
 .metric-card::after {
   position: absolute;
   inset: auto 14px 14px auto;
@@ -919,6 +923,62 @@ a {
   font-weight: 800;
 }
 
+.lead-category-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 270px), 1fr));
+  gap: 16px;
+}
+
+.lead-category-card {
+  min-width: 0;
+  padding: 18px;
+  background: var(--crm-surface);
+  border: 1px solid var(--crm-border);
+  border-radius: var(--crm-radius);
+  box-shadow: 0 1px 2px rgba(17, 24, 39, 0.04);
+  cursor: pointer;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
+}
+
+.lead-category-card:hover {
+  border-color: var(--crm-border-strong);
+  box-shadow: 0 10px 24px rgba(17, 24, 39, 0.08);
+  transform: translateY(-1px);
+}
+
+.lead-category-card__content {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 14px;
+}
+
+.lead-category-card__icon {
+  display: inline-flex;
+  width: 52px;
+  height: 52px;
+  flex: 0 0 52px;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--crm-radius);
+}
+
+.lead-category-card__text {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.lead-category-card__title {
+  overflow: hidden;
+  margin: 0;
+  color: var(--crm-ink);
+  font-size: 18px;
+  font-weight: 750;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .split-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.4fr) minmax(320px, 0.8fr);
@@ -927,9 +987,27 @@ a {
 
 .call-filter-grid {
   display: grid;
-  grid-template-columns: 150px 150px minmax(260px, 1fr) minmax(180px, 220px) minmax(160px, 200px) minmax(160px, 200px);
-  gap: 12px;
+  grid-template-columns:
+    minmax(138px, 152px)
+    minmax(138px, 152px)
+    minmax(300px, 1fr)
+    minmax(165px, 200px)
+    minmax(155px, 190px)
+    minmax(155px, 190px);
+  gap: 12px 14px;
   align-items: end;
+}
+
+.call-filter-grid > * {
+  min-width: 0;
+}
+
+.call-filter-grid .form-input {
+  min-width: 0;
+}
+
+.call-filter-search {
+  grid-column: auto;
 }
 
 .call-history-scroll {
@@ -1875,13 +1953,57 @@ a {
   }
 }
 
+@media (max-width: 1500px) {
+  .split-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .call-filter-grid {
+    grid-template-columns: repeat(8, minmax(0, 1fr));
+  }
+
+  .call-filter-date {
+    grid-column: span 2;
+  }
+
+  .call-filter-search {
+    grid-column: span 4;
+  }
+
+  .call-filter-user,
+  .call-filter-direction {
+    grid-column: span 3;
+  }
+
+  .call-filter-status {
+    grid-column: span 2;
+  }
+}
+
 @media (max-width: 1180px) {
   .metric-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .call-filter-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(8, minmax(0, 1fr));
+  }
+
+  .call-filter-date {
+    grid-column: span 2;
+  }
+
+  .call-filter-search {
+    grid-column: span 4;
+  }
+
+  .call-filter-user,
+  .call-filter-direction {
+    grid-column: span 3;
+  }
+
+  .call-filter-status {
+    grid-column: span 2;
   }
 
   .split-grid,
@@ -2017,6 +2139,23 @@ a {
   }
 }
 
+@media (max-width: 920px) {
+  .call-filter-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .call-filter-date,
+  .call-filter-user,
+  .call-filter-status {
+    grid-column: span 1;
+  }
+
+  .call-filter-search,
+  .call-filter-direction {
+    grid-column: 1 / -1;
+  }
+}
+
 @media (max-width: 720px) {
   .main-content {
     padding: 14px;
@@ -2057,8 +2196,41 @@ a {
     grid-template-columns: 1fr;
   }
 
+  .metric-card--wide {
+    grid-column: auto;
+  }
+
+  .lead-category-grid {
+    gap: 12px;
+  }
+
+  .lead-category-card {
+    padding: 14px;
+  }
+
+  .lead-category-card__icon {
+    width: 44px;
+    height: 44px;
+    flex-basis: 44px;
+  }
+
+  .lead-category-card__title {
+    font-size: 16px;
+  }
+
   .call-filter-grid {
     grid-template-columns: 1fr;
+  }
+
+  .call-filter-date,
+  .call-filter-search {
+    grid-column: 1 / -1;
+  }
+
+  .call-filter-user,
+  .call-filter-status,
+  .call-filter-direction {
+    grid-column: 1 / -1;
   }
 
   .call-filter-grid .self-end {

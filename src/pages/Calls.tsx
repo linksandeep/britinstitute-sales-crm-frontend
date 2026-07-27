@@ -19,10 +19,11 @@ import {
 } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { leadApi, zoomPhoneApi } from '../lib/api';
+import { leadApi, userApi, zoomPhoneApi } from '../lib/api';
 import { formatDuration, formatTalkTime } from '../lib/callCenterData';
 import type {
   Lead,
+  User,
   ZoomPhoneAnalyticsResponse,
   ZoomPhoneCallLog,
   ZoomPhoneInventoryResponse,
@@ -404,27 +405,34 @@ const buildUserFilterTokens = (values: unknown[]) =>
 
 const getOptionNameKey = (value?: unknown) => toSafeString(value).trim().toLowerCase().replace(/\s+/g, ' ');
 
+const getUserFilterEmails = (values: unknown[]) =>
+  buildUserFilterTokens(values).filter((token) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(token));
+
+type UserFilterOption = {
+  value: string;
+  label: string;
+  meta: string;
+  inactive?: boolean;
+  aliases: string[];
+};
+
+const userOptionsShareIdentity = (first: UserFilterOption, second: UserFilterOption) => {
+  const firstName = getOptionNameKey(first.label);
+  const secondName = getOptionNameKey(second.label);
+  if (firstName && firstName === secondName) return true;
+
+  const firstEmails = getUserFilterEmails([first.label, first.meta, ...first.aliases]);
+  const secondEmails = getUserFilterEmails([second.label, second.meta, ...second.aliases]);
+  return firstEmails.some((email) => secondEmails.includes(email));
+};
+
 const userOptionLooksDuplicate = (
-  option: { value: string; label: string; meta: string },
-  canonicalOptions: Array<{ value: string; label: string; meta: string }>
+  option: UserFilterOption,
+  canonicalOptions: UserFilterOption[]
 ) => {
   if (option.value.startsWith('crm:')) return false;
 
-  const optionName = getOptionNameKey(option.label);
-  const optionTokens = buildUserFilterTokens([option.label, option.meta]);
-
-  return canonicalOptions.some((canonical) => {
-    const canonicalName = getOptionNameKey(canonical.label);
-    const canonicalTokens = buildUserFilterTokens([canonical.label, canonical.meta]);
-    return (
-      optionName === canonicalName ||
-      (canonicalName.length >= 3 && optionName.includes(canonicalName)) ||
-      (optionName.length >= 3 && canonicalName.includes(optionName)) ||
-      optionTokens.some((token) =>
-        canonicalTokens.some((canonicalToken) => token === canonicalToken || token.includes(canonicalToken) || canonicalToken.includes(token))
-      )
-    );
-  });
+  return canonicalOptions.some((canonical) => userOptionsShareIdentity(option, canonical));
 };
 
 const getHistoryCustomerNumber = (item: UnifiedCallHistoryItem) => {
@@ -464,6 +472,7 @@ const Calls: React.FC = () => {
   const [analytics, setAnalytics] = useState<ZoomPhoneAnalyticsResponse>(emptyAnalytics);
   const [inventory, setInventory] = useState<ZoomPhoneInventoryResponse>(emptyInventory);
   const [liveStatus, setLiveStatus] = useState<ZoomPhoneLiveStatusResponse>(emptyLiveStatus);
+  const [crmUsers, setCrmUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
   const [zoomError, setZoomError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
@@ -516,6 +525,7 @@ const Calls: React.FC = () => {
         setAnalytics(emptyAnalytics);
         setInventory(emptyInventory);
         setLiveStatus(emptyLiveStatus);
+        setCrmUsers([]);
         return;
       }
 
@@ -534,12 +544,13 @@ const Calls: React.FC = () => {
         setAnalytics(emptyAnalytics);
         setInventory(emptyInventory);
         setLiveStatus(emptyLiveStatus);
+        setCrmUsers([]);
         setZoomError(`Zoom Phone is not configured. Missing: ${statusResponse.data.missing.join(', ')}`);
         return;
       }
 
       const today = formatDateInput(new Date());
-      const [analyticsResponse, inventoryResponse, liveResponse] = await Promise.all([
+      const [analyticsResponse, inventoryResponse, liveResponse, usersResponse] = await Promise.all([
         zoomPhoneApi.getAnalytics({
           from: fromDate,
           to: toDate,
@@ -556,7 +567,8 @@ const Calls: React.FC = () => {
           to: today,
           pageSize: 100,
           maxPages: 2
-        })
+        }),
+        userApi.getAllUsers()
       ]);
 
       if (analyticsResponse.success && analyticsResponse.data) {
@@ -609,11 +621,19 @@ const Calls: React.FC = () => {
         setLiveStatus(emptyLiveStatus);
         setZoomError((current) => current || liveResponse.message || 'Unable to sync live Zoom Phone status');
       }
+
+      if (usersResponse.success && usersResponse.data) {
+        setCrmUsers(usersResponse.data);
+      } else {
+        setCrmUsers([]);
+        setZoomError((current) => current || usersResponse.message || 'Unable to load CRM users');
+      }
     } catch (error) {
       setZoomError(error instanceof Error ? error.message : 'Unable to load Zoom Phone data');
       setAnalytics(emptyAnalytics);
       setInventory(emptyInventory);
       setLiveStatus(emptyLiveStatus);
+      setCrmUsers([]);
     } finally {
       setLoading(false);
     }
@@ -687,30 +707,50 @@ const Calls: React.FC = () => {
   );
 
   const userOptions = useMemo(() => {
-    const options = new Map<string, { label: string; meta: string; inactive?: boolean }>();
-    const addOption = (value: string, label: unknown, meta: unknown, inactive?: boolean) => {
+    const options = new Map<string, UserFilterOption>();
+    const addOption = (
+      value: string,
+      label: unknown,
+      meta: unknown,
+      inactive?: boolean,
+      aliases: unknown[] = []
+    ) => {
+      if (!value.startsWith('crm:')) return;
+
       const normalizedLabel = toSafeString(label).trim() || 'Zoom user';
       const normalizedMeta = toSafeString(meta).trim() || 'Zoom Phone';
-      const duplicate = Array.from(options.entries()).find(([, existing]) => {
-        const sameName = getOptionNameKey(existing.label) === getOptionNameKey(normalizedLabel);
-        const existingTokens = buildUserFilterTokens([existing.label, existing.meta]);
-        const nextTokens = buildUserFilterTokens([normalizedLabel, normalizedMeta]);
-        return (
-          sameName ||
-          nextTokens.some((token) =>
-            existingTokens.some((existingToken) => token === existingToken || token.includes(existingToken) || existingToken.includes(token))
-          )
-        );
+      const option: UserFilterOption = {
+        value,
+        label: normalizedLabel,
+        meta: normalizedMeta,
+        inactive,
+        aliases: uniqueStrings([value, normalizedLabel, normalizedMeta, ...aliases])
+      };
+      const duplicate = Array.from(options.values()).find((existing) => {
+        return existing.value === value || userOptionsShareIdentity(option, existing);
       });
 
-      if (duplicate && !value.startsWith('crm:')) return;
-      if (duplicate && value.startsWith('crm:') && !duplicate[0].startsWith('crm:')) {
-        options.delete(duplicate[0]);
+      if (duplicate) {
+        duplicate.aliases = uniqueStrings([...duplicate.aliases, ...option.aliases]);
+        duplicate.inactive = duplicate.inactive && inactive !== false;
+        if (!duplicate.meta.includes('@') && option.meta.includes('@')) {
+          duplicate.meta = option.meta;
+        }
+        return;
       }
-      if (!options.has(value)) {
-        options.set(value, { label: normalizedLabel, meta: normalizedMeta, inactive });
-      }
+
+      options.set(value, option);
     };
+
+    crmUsers.forEach((crmUser) => {
+      addOption(
+        `crm:${crmUser._id}`,
+        crmUser.name,
+        crmUser.email,
+        crmUser.isActive === false,
+        [crmUser.email, crmUser.name]
+      );
+    });
 
     analytics.call_logs.forEach((call) => {
       const key = getCallUserFilterKey(call);
@@ -718,7 +758,8 @@ const Calls: React.FC = () => {
         key,
         getCallAgent(call),
         call.matched_user?.email || call.owner?.phone_number || call.owner?.extension_number || 'Zoom Phone',
-        call.matched_user?.isActive === false
+        call.matched_user?.isActive === false,
+        [call.matched_user?.email, call.owner?.email, call.user_email, call.caller_email, call.callee_email]
       );
     });
 
@@ -728,7 +769,8 @@ const Calls: React.FC = () => {
         key,
         recording.matched_user?.name || getRecordingOwner(recording),
         recording.matched_user?.email || recording.owner?.phone_number || recording.owner?.extension_number || 'Zoom Phone',
-        recording.matched_user?.isActive === false
+        recording.matched_user?.isActive === false,
+        [recording.matched_user?.email, recording.owner?.email, recording.user_email, recording.caller_email, recording.callee_email]
       );
     });
 
@@ -738,19 +780,19 @@ const Calls: React.FC = () => {
         key,
         phoneUser.matched_user?.name || phoneUser.name || phoneUser.email || 'Zoom user',
         phoneUser.matched_user?.email || phoneUser.email || phoneUser.connected_numbers.join(', ') || 'Zoom Phone',
-        phoneUser.matched_user?.isActive === false
+        phoneUser.matched_user?.isActive === false,
+        [phoneUser.matched_user?.email, phoneUser.email]
       );
     });
 
-    const preparedOptions = Array.from(options.entries())
-      .map(([value, option]) => ({ value, ...option }))
+    const preparedOptions = Array.from(options.values())
       .sort((a, b) => Number(b.value.startsWith('crm:')) - Number(a.value.startsWith('crm:')));
     const canonicalOptions = preparedOptions.filter((option) => option.value.startsWith('crm:'));
 
     return preparedOptions
       .filter((option) => !userOptionLooksDuplicate(option, canonicalOptions))
       .sort((a, b) => a.label.localeCompare(b.label));
-  }, [analytics.call_logs, analytics.recordings, liveStatus.phone_users]);
+  }, [analytics.call_logs, analytics.recordings, crmUsers, liveStatus.phone_users]);
 
   const selectedUserOption = useMemo(
     () => userOptions.find((option) => option.value === userFilter),
@@ -769,13 +811,14 @@ const Calls: React.FC = () => {
 
   const filteredHistory = useMemo(() => {
     const normalizedQuery = debouncedQuery.trim().toLowerCase();
-    const selectedUserTokens = selectedUserOption
-      ? buildUserFilterTokens([selectedUserOption.label, selectedUserOption.meta])
+    const selectedUserEmails = selectedUserOption
+      ? getUserFilterEmails([selectedUserOption.label, selectedUserOption.meta, ...selectedUserOption.aliases])
       : [];
 
     return unifiedHistory.filter((item) => {
       const call = item.call;
       const recording = item.recording;
+      const matchedUser = getHistoryMatchedUser(item);
       const searchable = [
         getHistoryName(item),
         getHistoryPhone(item),
@@ -809,23 +852,21 @@ const Calls: React.FC = () => {
       const matchesSearch = !normalizedQuery || searchable.includes(normalizedQuery);
       const matchesStatus = statusFilter === 'All' || getHistoryStatus(item) === statusFilter;
       const matchesDirection = directionFilter === 'All' || getHistoryDirection(item) === directionFilter;
-      const historyUserTokens = buildUserFilterTokens([
-        getHistoryUserFilterKey(item),
-        getHistoryAgent(item),
-        getHistoryUserEmail(item),
-        call?.matched_user?.phone,
-        recording?.matched_user?.phone,
-        call?.owner?.phone_number,
-        call?.owner?.extension_number,
-        recording?.owner?.phone_number,
-        recording?.owner?.extension_number
+      const historyUserEmails = getUserFilterEmails([
+        matchedUser?.email,
+        call?.owner?.email,
+        recording?.owner?.email,
+        call?.user_email,
+        recording?.user_email,
+        call?.caller_email,
+        call?.callee_email,
+        recording?.caller_email,
+        recording?.callee_email
       ]);
       const matchesUser =
         userFilter === 'All' ||
         getHistoryUserFilterKey(item) === userFilter ||
-        selectedUserTokens.some((selectedToken) =>
-          historyUserTokens.some((historyToken) => historyToken === selectedToken || historyToken.includes(selectedToken))
-        );
+        selectedUserEmails.some((selectedEmail) => historyUserEmails.includes(selectedEmail));
 
       return matchesSearch && matchesStatus && matchesDirection && matchesUser;
     });
@@ -842,7 +883,8 @@ const Calls: React.FC = () => {
     const missedCalls = countUniqueCustomers(missedItems);
     const connectedCalls = countUniqueCustomers(connectedItems);
     const totalTalkTime = filteredHistory.reduce((total, item) => total + getHistoryDuration(item), 0);
-    const recordingCount = filteredHistory.reduce((total, item) => total + getHistoryRecordingCount(item), 0);
+    const recordedCallCount = filteredHistory.filter(hasHistoryRecording).length;
+    const recordingFileCount = filteredHistory.reduce((total, item) => total + getHistoryRecordingCount(item), 0);
 
     return {
       totalCalls,
@@ -854,7 +896,8 @@ const Calls: React.FC = () => {
       missedCalls,
       connectedCalls,
       totalTalkTime,
-      recordingCount,
+      recordedCallCount,
+      recordingFileCount,
       averageCallDuration: totalCalls ? Math.round(totalTalkTime / totalCalls) : 0,
       answerRate: totalCalls ? Math.round((connectedCalls / totalCalls) * 100) : 0
     };
@@ -1215,8 +1258,8 @@ const Calls: React.FC = () => {
     },
     {
       label: 'Recordings',
-      value: filteredReport.recordingCount,
-      helper: `${filteredReport.recordingCount} recording file${filteredReport.recordingCount === 1 ? '' : 's'} matched`,
+      value: filteredReport.recordedCallCount,
+      helper: `${filteredReport.recordingFileCount} recording file${filteredReport.recordingFileCount === 1 ? '' : 's'} matched`,
       icon: Mic,
       tone: 'metric-card--amber'
     }
@@ -1307,7 +1350,10 @@ const Calls: React.FC = () => {
             {liveCards.map((metric) => {
               const Icon = metric.icon;
               return (
-                <div key={metric.label} className={`metric-card ${metric.tone}`}>
+	                <div
+	                  key={metric.label}
+	                  className={`metric-card ${metric.tone} ${metric.label === 'Recordings' ? 'metric-card--wide' : ''}`}
+	                >
                   <div className="metric-card__top">
                     <p className="metric-card__label">{metric.label}</p>
                     <Icon className="h-5 w-5" />
@@ -1475,7 +1521,7 @@ const Calls: React.FC = () => {
           <div className="card">
             <div className="card-body">
               <div className="call-filter-grid">
-                <label className="space-y-1">
+                <label className="call-filter-date space-y-1">
                   <span className="text-xs font-bold uppercase text-gray-500">From</span>
                   <input
                     type="date"
@@ -1485,7 +1531,7 @@ const Calls: React.FC = () => {
                     onChange={(event) => setFromDate(event.target.value)}
                   />
                 </label>
-                <label className="space-y-1">
+                <label className="call-filter-date space-y-1">
                   <span className="text-xs font-bold uppercase text-gray-500">To</span>
                   <input
                     type="date"
@@ -1495,7 +1541,7 @@ const Calls: React.FC = () => {
                     onChange={(event) => setToDate(event.target.value)}
                   />
                 </label>
-                <div className="relative self-end">
+                <div className="call-filter-search relative self-end">
                   <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
                   <input
                     type="search"
@@ -1505,7 +1551,7 @@ const Calls: React.FC = () => {
                     placeholder="Search lead name, phone, email, agent, result, or site"
                   />
                 </div>
-                <select value={userFilter} onChange={(event) => setUserFilter(event.target.value)} className="form-input self-end" aria-label="Filter by user">
+                <select value={userFilter} onChange={(event) => setUserFilter(event.target.value)} className="call-filter-user form-input self-end" aria-label="Filter by user">
                   <option value="All">All users</option>
                   {userOptions.map((option) => (
                     <option key={option.value} value={option.value}>
@@ -1513,7 +1559,7 @@ const Calls: React.FC = () => {
                     </option>
                   ))}
                 </select>
-                <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="form-input self-end" aria-label="Call status">
+                <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="call-filter-status form-input self-end" aria-label="Call status">
                   <option value="All">All statuses</option>
                   {availableStatuses.map((status) => (
                     <option key={status} value={status}>
@@ -1521,7 +1567,7 @@ const Calls: React.FC = () => {
                     </option>
                   ))}
                 </select>
-                <select value={directionFilter} onChange={(event) => setDirectionFilter(event.target.value)} className="form-input self-end" aria-label="Call direction">
+                <select value={directionFilter} onChange={(event) => setDirectionFilter(event.target.value)} className="call-filter-direction form-input self-end" aria-label="Call direction">
                   <option value="All">All directions</option>
                   {availableDirections.map((direction) => (
                     <option key={direction} value={direction}>
@@ -1642,10 +1688,10 @@ const Calls: React.FC = () => {
                                 {formatCompactDateTime(getHistoryStartedAt(item))}
                               </span>
                             </div>
-                          </td>
-                          <td data-label="Status">
-                            <span className={statusClass(getHistoryStatus(item))}>{getHistoryStatus(item)}</span>
-                          </td>
+	                          </td>
+	                          <td data-label="Status">
+	                            <span className="font-semibold text-gray-700">{getHistoryStatus(item)}</span>
+	                          </td>
                           <td data-label="Duration">{formatDuration(getHistoryDuration(item))}</td>
                           <td data-label="User">
                             <p className="flex items-center gap-2 font-semibold text-gray-800">
@@ -1744,7 +1790,7 @@ const Calls: React.FC = () => {
                         'Zoom Phone record'}
                     </p>
                   </div>
-                  <span className={statusClass(getHistoryStatus(selectedHistoryItem))}>{getHistoryStatus(selectedHistoryItem)}</span>
+	                  <span className="text-sm font-semibold text-gray-600">{getHistoryStatus(selectedHistoryItem)}</span>
                 </div>
                 <div className="card-body space-y-5">
                   <div className="flex items-start gap-3">

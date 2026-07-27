@@ -520,7 +520,7 @@ const MyLeads: React.FC = () => {
             <p className="text-sm text-gray-600">Click on a status or folder to view your leads</p>
           </div>
           <div className="card-body">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+            <div className="lead-category-grid">
               {/* Status Groups - sorted by count */}
               {statusOptions
                 .filter(status => (statusStats[status] || 0) > 0)
@@ -528,7 +528,7 @@ const MyLeads: React.FC = () => {
                 .map(status => (
                 <div
                   key={`status-${status}`}
-                  className="bg-white border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow cursor-pointer"
+	                  className="lead-category-card"
                   onClick={() => {
                     setSelectedFolder(status);
                     setCurrentView('leads');
@@ -537,13 +537,13 @@ const MyLeads: React.FC = () => {
                     setCurrentPage(1);
                   }}
                 >
-                  <div className="flex items-center gap-3">
-                    <div className={`p-2 rounded-lg ${getStatusColor(status).split(' ')[0]}`}>
-                      <Target className="w-6 h-6 text-gray-700" />
-                    </div>
-                    <div className="flex-1">
-                      <h3 className="font-medium text-gray-900">{status}</h3>
-                      <p className="text-sm text-gray-500">
+	                  <div className="lead-category-card__content">
+	                    <div className={`lead-category-card__icon ${getStatusColor(status).split(' ')[0]}`}>
+	                      <Target className="w-6 h-6 text-gray-700" />
+	                    </div>
+	                    <div className="lead-category-card__text">
+	                      <h3 className="lead-category-card__title" title={status}>{status}</h3>
+	                      <p className="text-sm text-gray-500">
                         {statusStats[status] || 0} lead{(statusStats[status] || 0) !== 1 ? 's' : ''}
                       </p>
                     </div>
@@ -557,7 +557,7 @@ const MyLeads: React.FC = () => {
                 .map(folder => (
                 <div
                   key={`folder-${folder}`}
-                  className="bg-white border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow cursor-pointer"
+	                  className="lead-category-card"
                   onClick={() => {
                     setSelectedFolder(folder);
                     setCurrentView('leads');
@@ -570,13 +570,13 @@ const MyLeads: React.FC = () => {
                     }
                   }}
                 >
-                  <div className="flex items-center gap-3">
-                    <div className="bg-blue-100 p-2 rounded-lg">
-                      <FolderOpen className="w-6 h-6 text-blue-600" />
-                    </div>
-                    <div className="flex-1">
-                      <h3 className="font-medium text-gray-900 truncate max-w-[180px]" title={folder}>
-                        {folder === 'Uncategorized' ? 'Uncategorized' : (folder || 'Unnamed Folder')}
+	                  <div className="lead-category-card__content">
+	                    <div className="lead-category-card__icon bg-blue-100">
+	                      <FolderOpen className="w-6 h-6 text-blue-600" />
+	                    </div>
+	                    <div className="lead-category-card__text">
+	                      <h3 className="lead-category-card__title" title={folder}>
+	                        {folder === 'Uncategorized' ? 'Uncategorized' : (folder || 'Unnamed Folder')}
                       </h3>
                       <p className="text-sm text-gray-500">
                         {folderStats[folder] || 0} lead{(folderStats[folder] || 0) !== 1 ? 's' : ''}
