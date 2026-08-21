@@ -79,7 +79,8 @@ const sourceOptions: LeadSource[] = [
   'Cold Call',
   'Email Campaign',
   'strategy_call_modal',
-  'data_analytics_landing_page'
+  'data_analytics_landing_page',
+  'Meta'
 ];
 
 const formatSource = (source: string) =>
@@ -1293,6 +1294,52 @@ const LeadDetails: React.FC = () => {
               )}
             </div>
           </div>
+
+          {(lead.source === 'Meta' || lead.metaLeadId) && (
+            <div className="card">
+              <div className="card-header">
+                <div>
+                  <h2 className="card-title">Meta Attribution</h2>
+                  <p className="card-subtitle">Lead Ads capture and CRM feedback</p>
+                </div>
+              </div>
+              <div className="card-body space-y-3">
+                <div className="lead-summary-row">
+                  <span>Campaign</span>
+                  <strong>{lead.campaignName || 'Not supplied'}</strong>
+                </div>
+                <div className="lead-summary-row">
+                  <span>Ad set</span>
+                  <strong>{lead.adsetName || 'Not supplied'}</strong>
+                </div>
+                <div className="lead-summary-row">
+                  <span>Ad</span>
+                  <strong>{lead.adName || 'Not supplied'}</strong>
+                </div>
+                <div className="lead-summary-row">
+                  <span>Meta Lead ID</span>
+                  <strong>{lead.metaLeadId || 'Not supplied'}</strong>
+                </div>
+                <div className="lead-summary-row">
+                  <span>Meta created</span>
+                  <strong>{lead.metaCreatedTime ? new Date(lead.metaCreatedTime).toLocaleString() : 'Not supplied'}</strong>
+                </div>
+                <div className="lead-summary-row">
+                  <span>Last feedback</span>
+                  <strong>
+                    {lead.metaFeedbackLastStatus
+                      ? `${lead.metaFeedbackLastStatus}${lead.metaFeedbackLastSentAt ? ` · ${new Date(lead.metaFeedbackLastSentAt).toLocaleString()}` : ''}`
+                      : 'Not sent yet'}
+                  </strong>
+                </div>
+                {lead.metaFeedbackLastError && (
+                  <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">
+                    Feedback error: {lead.metaFeedbackLastError}
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
         </aside>
       </div>
 

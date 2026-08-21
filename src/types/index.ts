@@ -57,6 +57,18 @@ export interface Lead {
   status: LeadStatus;
   priority: LeadPriority;
 
+  campaignName?: string;
+  adsetName?: string;
+  adName?: string;
+  metaLeadId?: string;
+  metaFormId?: string;
+  metaPageId?: string;
+  metaAdId?: string;
+  metaCreatedTime?: string;
+  metaFeedbackLastStatus?: string;
+  metaFeedbackLastSentAt?: string;
+  metaFeedbackLastError?: string;
+
   assignedTo?: string;
   assignedBy?: string;
   assignedToUser?: User;
@@ -92,7 +104,8 @@ export type LeadSource =
   | 'Cold Call'
   | 'Email Campaign'
   | 'strategy_call_modal'
-  | 'data_analytics_landing_page';
+  | 'data_analytics_landing_page'
+  | 'Meta';
 
 // LeadStatus is now dynamic - fetched from API
 export type LeadStatus = string;

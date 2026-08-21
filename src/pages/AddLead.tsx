@@ -51,7 +51,8 @@ const AddLead: React.FC = () => {
     'Cold Call',
     'Email Campaign',
     'strategy_call_modal',
-    'data_analytics_landing_page'
+    'data_analytics_landing_page',
+    'Meta'
   ];
 
   const priorityOptions: LeadPriority[] = ['High', 'Medium', 'Low'];
