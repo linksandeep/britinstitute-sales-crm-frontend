@@ -258,6 +258,7 @@ export interface ZoomPhoneStatus {
 export interface ZoomPhoneOwner {
   id?: string;
   name?: string;
+  email?: string;
   extension_number?: string;
   phone_number?: string;
   type?: string;
@@ -268,6 +269,9 @@ export interface ZoomPhoneCrmUserMatch {
   name: string;
   email?: string;
   phone?: string;
+  isActive?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface ZoomPhoneCrmLeadMatch {
@@ -292,6 +296,9 @@ export interface ZoomPhoneCallLog {
   callee_did_number?: string;
   caller_phone_number?: string;
   callee_phone_number?: string;
+  caller_email?: string;
+  callee_email?: string;
+  user_email?: string;
   caller_name?: string;
   callee_name?: string;
   result?: string;
@@ -326,6 +333,9 @@ export interface ZoomPhoneRecording {
   caller_number_type?: string;
   callee_number?: string;
   callee_number_type?: string;
+  caller_email?: string;
+  callee_email?: string;
+  user_email?: string;
   caller_name?: string;
   callee_name?: string;
   direction?: string;
@@ -493,9 +503,40 @@ export interface ZoomPhoneInventoryResponse {
   };
 }
 
+export type ZoomPhoneNumberAssignmentSource = 'zoom_inventory' | 'crm_backfill' | 'manual';
+
+export interface ZoomPhoneNumberAssignment {
+  id: string;
+  normalizedNumber: string;
+  displayNumber?: string;
+  zoomNumberId?: string;
+  zoomPhoneUserId?: string;
+  zoomPhoneUserEmail?: string;
+  zoomPhoneUserName?: string;
+  crmUser: string;
+  crmUserEmail: string;
+  crmUserName: string;
+  assignedAt: string;
+  releasedAt?: string;
+  source: ZoomPhoneNumberAssignmentSource;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface ZoomPhoneNumberAssignmentsResponse {
+  assignments: ZoomPhoneNumberAssignment[];
+}
+
+export interface ZoomPhoneNumberAssignmentRequest {
+  userId: string;
+  phoneNumber: string;
+  assignedAt?: string;
+}
+
 export interface ZoomPhoneMetricParty {
   phone_number?: string;
   extension_number?: string;
+  email?: string;
   device_type?: string;
   site_id?: string;
   site_name?: string;

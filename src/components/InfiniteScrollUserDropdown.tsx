@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { ChevronDown, Loader } from 'lucide-react';
 import type { User } from '../types';
+import api from '../lib/api';
 
 interface InfiniteScrollUserDropdownProps {
   value: string;
@@ -56,19 +57,8 @@ const InfiniteScrollUserDropdown: React.FC<InfiniteScrollUserDropdownProps> = ({
         ...(search && { search })
       });
 
-      const response = await fetch(
-        `${import.meta.env.VITE_API_URL || 'http://localhost:8000/api'}/users?${params}`,
-        {
-          headers: {
-            'Authorization': `Bearer ${localStorage.getItem('token')}`,
-            'Content-Type': 'application/json',
-          },
-        }
-      );
-
-      if (!response.ok) throw new Error('Failed to fetch users');
-
-      const data = await response.json();
+      const response = await api.get(`/users?${params}`);
+      const data = response.data;
 
       if (data.success && data.data) {
         const activeUsers = data.data.filter((u: User) => u.isActive);

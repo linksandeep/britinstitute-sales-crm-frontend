@@ -24,12 +24,45 @@ import type {
   ZoomPhoneLeadCallsResponse,
   ZoomPhoneLeadRecordingsResponse,
   ZoomPhoneLiveStatusResponse,
+  ZoomPhoneNumberAssignment,
+  ZoomPhoneNumberAssignmentRequest,
+  ZoomPhoneNumberAssignmentsResponse,
   ZoomPhoneStatus,
 
 } from '../types';
+
+const isLoopbackHost = (hostname: string) => hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
+
+const resolveApiBaseUrl = () => {
+  const configuredUrl = import.meta.env.VITE_API_URL;
+
+  if (typeof window !== 'undefined') {
+    const { protocol, hostname } = window.location;
+
+    if (configuredUrl) {
+      try {
+        const url = new URL(configuredUrl);
+        if (!isLoopbackHost(hostname) && isLoopbackHost(url.hostname)) {
+          url.protocol = protocol;
+          url.hostname = hostname;
+          return url.toString().replace(/\/$/, '');
+        }
+      } catch {
+        return configuredUrl;
+      }
+
+      return configuredUrl;
+    }
+
+    return `${protocol}//${hostname}:8000/api`;
+  }
+
+  return configuredUrl || 'http://localhost:8000/api';
+};
+
 // Create axios instance with base configuration
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL || 'http://localhost:8000/api',
+  baseURL: resolveApiBaseUrl(),
   timeout: 30000,
   headers: {
     'Content-Type': 'application/json',
@@ -1026,6 +1059,7 @@ interface ZoomPhoneQuery {
   nextPageToken?: string;
   pageSize?: number;
   maxPages?: number;
+  includeRecordings?: boolean;
 }
 
 const appendZoomPhoneQuery = (params: URLSearchParams, query?: ZoomPhoneQuery) => {
@@ -1036,12 +1070,36 @@ const appendZoomPhoneQuery = (params: URLSearchParams, query?: ZoomPhoneQuery) =
   if (query.nextPageToken) params.append('nextPageToken', query.nextPageToken);
   if (query.pageSize) params.append('pageSize', query.pageSize.toString());
   if (query.maxPages) params.append('maxPages', query.maxPages.toString());
+  if (query.includeRecordings !== undefined) params.append('includeRecordings', String(query.includeRecordings));
 };
 
 export const zoomPhoneApi = {
   getStatus: async (): Promise<ApiResponse<ZoomPhoneStatus>> => {
     try {
       const response = await api.get('/zoom-phone/status');
+      return handleResponse(response);
+    } catch (error) {
+      return handleError(error);
+    }
+  },
+  getAssignments: async (
+    options?: { active?: boolean }
+  ): Promise<ApiResponse<ZoomPhoneNumberAssignmentsResponse>> => {
+    try {
+      const params = new URLSearchParams();
+      if (options?.active !== undefined) params.append('active', String(options.active));
+      const queryString = params.toString();
+      const response = await api.get(`/zoom-phone/assignments${queryString ? `?${queryString}` : ''}`);
+      return handleResponse(response);
+    } catch (error) {
+      return handleError(error);
+    }
+  },
+  assignNumber: async (
+    payload: ZoomPhoneNumberAssignmentRequest
+  ): Promise<ApiResponse<ZoomPhoneNumberAssignment>> => {
+    try {
+      const response = await api.post('/zoom-phone/assignments', payload);
       return handleResponse(response);
     } catch (error) {
       return handleError(error);

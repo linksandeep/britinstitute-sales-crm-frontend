@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { userApi } from '../lib/api';
+import { userApi, zoomPhoneApi } from '../lib/api';
 import type { User } from '../types';
 import { 
   Plus,
@@ -26,6 +26,12 @@ interface UserStats {
   userUsers: number;
 }
 
+const getDateInputValue = () => {
+  const now = new Date();
+  const localDate = new Date(now.getTime() - now.getTimezoneOffset() * 60_000);
+  return localDate.toISOString().slice(0, 10);
+};
+
 const UserManagement: React.FC = () => {
   const { user: currentUser } = useAuth();
   const [users, setUsers] = useState<User[]>([]);
@@ -37,6 +43,12 @@ const UserManagement: React.FC = () => {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
   const [deleteUser, setDeleteUser] = useState<User | null>(null);
+  const [assigningUser, setAssigningUser] = useState<User | null>(null);
+  const [assignmentLoading, setAssignmentLoading] = useState(false);
+  const [assignmentForm, setAssignmentForm] = useState({
+    phoneNumber: '',
+    assignedAt: getDateInputValue()
+  });
 
   // Form state for create/edit
 // Form state for create/edit
@@ -138,6 +150,23 @@ const [formData, setFormData] = useState({
     setShowCreateModal(true);
   };
 
+  const openAssignmentModal = (user: User) => {
+    setAssigningUser(user);
+    setAssignmentForm({
+      phoneNumber: user.phone || '',
+      assignedAt: getDateInputValue()
+    });
+  };
+
+  const closeAssignmentModal = () => {
+    if (assignmentLoading) return;
+    setAssigningUser(null);
+    setAssignmentForm({
+      phoneNumber: '',
+      assignedAt: getDateInputValue()
+    });
+  };
+
   const closeModal = () => {
     setShowCreateModal(false);
     setEditingUser(null);
@@ -204,6 +233,32 @@ const [formData, setFormData] = useState({
       }
     } catch (error) {
       toast.error('Failed to delete user');
+    }
+  };
+
+  const handleAssignNumber = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!assigningUser) return;
+
+    try {
+      setAssignmentLoading(true);
+      const response = await zoomPhoneApi.assignNumber({
+        userId: assigningUser._id,
+        phoneNumber: assignmentForm.phoneNumber,
+        assignedAt: assignmentForm.assignedAt
+      });
+
+      if (response.success) {
+        toast.success('Zoom number assigned successfully');
+        await fetchUsers();
+        setAssigningUser(null);
+      } else {
+        toast.error(response.message || 'Failed to assign Zoom number');
+      }
+    } catch (error) {
+      toast.error('Failed to assign Zoom number');
+    } finally {
+      setAssignmentLoading(false);
     }
   };
 
@@ -424,21 +479,28 @@ const [formData, setFormData] = useState({
                       <Calendar className="w-3 h-3 mr-1" />
                       {new Date(user.createdAt).toLocaleDateString()}
                     </div>
-                  </td>
-                  <td>
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => openEditModal(user)}
-                        className="text-blue-600 hover:text-blue-800"
-                        title="Edit User"
-                      >
-                        <Edit className="w-4 h-4" />
-                      </button>
-                      {currentUser?._id !== user._id && (
-                        <button
-                          onClick={() => setDeleteUser(user)}
-                          className="text-red-600 hover:text-red-800"
-                          title="Delete User"
+	                  </td>
+	                  <td>
+	                    <div className="flex items-center gap-2">
+	                      <button
+	                        onClick={() => openEditModal(user)}
+	                        className="text-blue-600 hover:text-blue-800"
+	                        title="Edit User"
+	                      >
+	                        <Edit className="w-4 h-4" />
+	                      </button>
+	                      <button
+	                        onClick={() => openAssignmentModal(user)}
+	                        className="text-green-600 hover:text-green-800"
+	                        title="Assign Zoom Number"
+	                      >
+	                        <Phone className="w-4 h-4" />
+	                      </button>
+	                      {currentUser?._id !== user._id && (
+	                        <button
+	                          onClick={() => setDeleteUser(user)}
+	                          className="text-red-600 hover:text-red-800"
+	                          title="Delete User"
                         >
                           <Trash2 className="w-4 h-4" />
                         </button>
@@ -593,10 +655,85 @@ const [formData, setFormData] = useState({
             </form>
           </div>
         </div>
-      )}
+	      )}
 
-      {/* Delete Confirmation Modal */}
-      {deleteUser && (
+	      {/* Zoom Number Assignment Modal */}
+	      {assigningUser && (
+	        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+	          <div className="bg-white rounded-lg p-6 w-full max-w-md mx-4">
+	            <div className="flex items-center justify-between mb-6">
+	              <div className="flex items-center gap-3">
+	                <div className="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center">
+	                  <Phone className="w-5 h-5 text-green-600" />
+	                </div>
+	                <div>
+	                  <h3 className="text-lg font-semibold text-gray-900">Assign Zoom Number</h3>
+	                  <p className="text-sm text-gray-500">{assigningUser.name}</p>
+	                </div>
+	              </div>
+	              <button
+	                onClick={closeAssignmentModal}
+	                className="text-gray-400 hover:text-gray-600"
+	                disabled={assignmentLoading}
+	              >
+	                <X className="w-6 h-6" />
+	              </button>
+	            </div>
+
+	            <form onSubmit={handleAssignNumber} className="space-y-4">
+	              <div className="form-group">
+	                <label className="form-label">Email</label>
+	                <input
+	                  type="email"
+	                  className="form-input bg-gray-50"
+	                  value={assigningUser.email}
+	                  disabled
+	                />
+	              </div>
+
+	              <div className="form-group">
+	                <label className="form-label">Zoom Number</label>
+	                <input
+	                  type="tel"
+	                  required
+	                  className="form-input"
+	                  value={assignmentForm.phoneNumber}
+	                  onChange={(e) => setAssignmentForm(prev => ({ ...prev, phoneNumber: e.target.value }))}
+	                  placeholder="+447447198857"
+	                />
+	              </div>
+
+	              <div className="form-group">
+	                <label className="form-label">Effective From</label>
+	                <input
+	                  type="date"
+	                  required
+	                  className="form-input"
+	                  value={assignmentForm.assignedAt}
+	                  onChange={(e) => setAssignmentForm(prev => ({ ...prev, assignedAt: e.target.value }))}
+	                />
+	              </div>
+
+	              <div className="flex items-center gap-3 pt-4">
+	                <button type="submit" className="btn btn-primary flex-1" disabled={assignmentLoading}>
+	                  {assignmentLoading ? 'Assigning...' : 'Assign Number'}
+	                </button>
+	                <button
+	                  type="button"
+	                  onClick={closeAssignmentModal}
+	                  className="btn btn-secondary"
+	                  disabled={assignmentLoading}
+	                >
+	                  Cancel
+	                </button>
+	              </div>
+	            </form>
+	          </div>
+	        </div>
+	      )}
+
+	      {/* Delete Confirmation Modal */}
+	      {deleteUser && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg p-6 w-full max-w-md mx-4">
             <div className="flex items-center mb-4">

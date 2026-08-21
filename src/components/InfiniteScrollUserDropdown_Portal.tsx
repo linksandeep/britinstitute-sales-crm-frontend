@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback, useLayoutEffect } from
 import { createPortal } from 'react-dom';
 import { ChevronDown, Loader, Search } from 'lucide-react';
 import type { User } from '../types';
+import api from '../lib/api';
 
 interface InfiniteScrollUserDropdownProps {
   value: string;
@@ -34,7 +35,7 @@ const InfiniteScrollUserDropdown: React.FC<InfiniteScrollUserDropdownProps> = ({
 
   const getSelectedUserName = () => {
     if (!value) return placeholder;
-    if (value === 'unassign') return '🔄 Unassign from current user';
+    if (value === 'unassign') return 'Unassign from current user';
     const selectedUser = users.find(u => u._id === value);
     return selectedUser ? `${selectedUser.name} (${selectedUser.role})` : placeholder;
   };
@@ -71,14 +72,8 @@ const InfiniteScrollUserDropdown: React.FC<InfiniteScrollUserDropdownProps> = ({
         ...(search && { search })
       });
 
-      const response = await fetch(`${import.meta.env.VITE_API_URL}/users?${params}`, {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`,
-          'Content-Type': 'application/json',
-        },
-      });
-
-      const data = await response.json();
+      const response = await api.get(`/users?${params}`);
+      const data = response.data;
       if (data.success) {
         const activeUsers = data.data.filter((u: User) => u.isActive);
         setUsers(prev => page === 1 ? activeUsers : [...prev, ...activeUsers]);

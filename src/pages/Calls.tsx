@@ -4,6 +4,8 @@ import {
   BarChart3,
   CalendarClock,
   CheckCircle,
+  ChevronLeft,
+  ChevronRight,
   Clock,
   Download,
   Headphones,
@@ -17,10 +19,11 @@ import {
 } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { leadApi, zoomPhoneApi } from '../lib/api';
+import { leadApi, userApi, zoomPhoneApi } from '../lib/api';
 import { formatDuration, formatTalkTime } from '../lib/callCenterData';
 import type {
   Lead,
+  User,
   ZoomPhoneAnalyticsResponse,
   ZoomPhoneCallLog,
   ZoomPhoneInventoryResponse,
@@ -31,14 +34,17 @@ import type {
 } from '../types';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 
-const formatDateInput = (date: Date) => date.toISOString().slice(0, 10);
+const formatDateInput = (date: Date) => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
 
 const getDefaultDateRange = () => {
   const to = new Date();
-  const from = new Date(to);
-  from.setDate(from.getDate() - 7);
   return {
-    from: formatDateInput(from),
+    from: formatDateInput(to),
     to: formatDateInput(to)
   };
 };
@@ -124,9 +130,21 @@ const statusClass = (status: string) => {
   return 'status-pill status-pill--slate';
 };
 
+const getDirectionText = (direction?: string) => (direction || '').trim().toLowerCase();
+
+const isIncomingDirection = (direction?: string) => {
+  const text = getDirectionText(direction);
+  return text === 'incoming' || text === 'inbound' || text.startsWith('incoming ') || text.startsWith('inbound ');
+};
+
+const isOutgoingDirection = (direction?: string) => {
+  const text = getDirectionText(direction);
+  return text === 'outgoing' || text === 'outbound' || text.startsWith('outgoing ') || text.startsWith('outbound ');
+};
+
 const directionClass = (direction: string) => {
-  if (direction === 'Incoming' || direction.toLowerCase().includes('in')) return 'status-pill status-pill--violet';
-  if (direction === 'Outgoing' || direction.toLowerCase().includes('out')) return 'status-pill status-pill--blue';
+  if (isIncomingDirection(direction)) return 'status-pill status-pill--violet';
+  if (isOutgoingDirection(direction)) return 'status-pill status-pill--blue';
   return 'status-pill status-pill--slate';
 };
 
@@ -135,6 +153,28 @@ const formatDateTime = (value?: string) => {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleString();
+};
+
+const formatCompactDateTime = (value?: string) => {
+  if (!value) return 'Not available';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit'
+  });
+};
+
+const isBenignPlayInterruption = (error: unknown) => {
+  if (!(error instanceof Error)) return false;
+  const message = error.message.toLowerCase();
+  return (
+    error.name === 'AbortError' ||
+    message.includes('interrupted by a new load request') ||
+    message.includes('interrupted by a call to pause')
+  );
 };
 
 const emptyAnalytics: ZoomPhoneAnalyticsResponse = {
@@ -201,10 +241,12 @@ type UnifiedCallHistoryItem = {
   recordings: ZoomPhoneRecording[];
 };
 
-const normalizeMatchPhone = (value?: string) => (value || '').replace(/\D/g, '');
+const toSafeString = (value: unknown) => (value == null ? '' : String(value));
 
-const uniqueStrings = (values: Array<string | undefined>) =>
-  Array.from(new Set(values.map((value) => (value || '').trim()).filter(Boolean)));
+const normalizeMatchPhone = (value?: unknown) => toSafeString(value).replace(/\D/g, '');
+
+const uniqueStrings = (values: unknown[]) =>
+  Array.from(new Set(values.map((value) => toSafeString(value).trim()).filter(Boolean)));
 
 const getCallIdentifierValues = (call: ZoomPhoneCallLog) =>
   uniqueStrings([call.id, call.call_id, call.recording_id, getCallKey(call)]);
@@ -218,6 +260,23 @@ const getRecordingIdentifierValues = (recording: ZoomPhoneRecording) =>
     recording.call_element_id,
     getRecordingKey(recording)
   ]);
+
+const getRecordingCallGroupKey = (recording: ZoomPhoneRecording) => {
+  const identifiers = uniqueStrings([
+    recording.call_id,
+    recording.call_log_id,
+    recording.call_history_id,
+    recording.call_element_id
+  ]);
+  if (identifiers.length > 0) return `recording-call:${identifiers[0]}`;
+
+  const recordingTime = getDateMs(recording.date_time || recording.end_time);
+  const minuteBucket = recordingTime ? Math.floor(recordingTime / 60_000) : recording.date_time || recording.end_time || 'unknown-time';
+  const numbers = getRecordingMatchNumbers(recording).sort().join('-') || 'unknown-number';
+  const owner = getRecordingUserFilterKey(recording);
+
+  return `recording-fallback:${owner}:${numbers}:${minuteBucket}`;
+};
 
 const getCallMatchNumbers = (call: ZoomPhoneCallLog) =>
   uniqueStrings([
@@ -294,6 +353,17 @@ const getHistoryLeadEmail = (item: UnifiedCallHistoryItem) => item.call?.matched
 
 const getHistoryUserEmail = (item: UnifiedCallHistoryItem) => item.call?.matched_user?.email || item.recording?.matched_user?.email;
 
+const getHistoryMatchedUser = (item: UnifiedCallHistoryItem) => item.call?.matched_user || item.recording?.matched_user;
+
+const InactiveUserDot = ({ inactive }: { inactive?: boolean }) =>
+  inactive ? (
+    <span
+      className="inline-block h-2 w-2 rounded-full bg-red-500 align-middle ring-2 ring-red-100"
+      title="Deactivated user"
+      aria-label="Deactivated user"
+    />
+  ) : null;
+
 const getHistoryRecordingCount = (item: UnifiedCallHistoryItem) => {
   if (item.recordings.length > 0) return item.recordings.length;
   if (item.call?.has_recording || item.call?.recording_download_url || item.call?.recording_id) {
@@ -303,6 +373,84 @@ const getHistoryRecordingCount = (item: UnifiedCallHistoryItem) => {
 };
 
 const hasHistoryRecording = (item: UnifiedCallHistoryItem) => getHistoryRecordingCount(item) > 0;
+
+const getStatusText = (status?: string) => (status || '').trim().toLowerCase();
+
+const isConnectedHistoryItem = (item: UnifiedCallHistoryItem) => {
+  const status = getStatusText(item.call ? getCallStatus(item.call) : undefined);
+  if ((!status || status === 'unknown') && item.call && getHistoryRecordingCount(item) > 0) return true;
+  if (!status) return false;
+  return (
+    status.includes('connect') ||
+    status.includes('answer') ||
+    status.includes('completed') ||
+    status.includes('accepted')
+  );
+};
+
+const isMissedHistoryItem = (item: UnifiedCallHistoryItem) => {
+  const status = getStatusText(item.call ? getCallStatus(item.call) : undefined);
+  return status.includes('miss') || status.includes('failed') || status.includes('no answer') || status.includes('abandoned');
+};
+
+const buildUserFilterTokens = (values: unknown[]) =>
+  values
+    .flatMap((value) => toSafeString(value).split(','))
+    .flatMap((value) => {
+      const normalized = value.trim().toLowerCase();
+      const phone = normalizeMatchPhone(value);
+      return phone ? [normalized, phone] : [normalized];
+    })
+    .filter(Boolean);
+
+const getOptionNameKey = (value?: unknown) => toSafeString(value).trim().toLowerCase().replace(/\s+/g, ' ');
+
+const getUserFilterEmails = (values: unknown[]) =>
+  buildUserFilterTokens(values).filter((token) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(token));
+
+type UserFilterOption = {
+  value: string;
+  label: string;
+  meta: string;
+  inactive?: boolean;
+  aliases: string[];
+};
+
+const userOptionsShareIdentity = (first: UserFilterOption, second: UserFilterOption) => {
+  const firstName = getOptionNameKey(first.label);
+  const secondName = getOptionNameKey(second.label);
+  if (firstName && firstName === secondName) return true;
+
+  const firstEmails = getUserFilterEmails([first.label, first.meta, ...first.aliases]);
+  const secondEmails = getUserFilterEmails([second.label, second.meta, ...second.aliases]);
+  return firstEmails.some((email) => secondEmails.includes(email));
+};
+
+const userOptionLooksDuplicate = (
+  option: UserFilterOption,
+  canonicalOptions: UserFilterOption[]
+) => {
+  if (option.value.startsWith('crm:')) return false;
+
+  return canonicalOptions.some((canonical) => userOptionsShareIdentity(option, canonical));
+};
+
+const getHistoryCustomerNumber = (item: UnifiedCallHistoryItem) => {
+  const direction = getHistoryDirection(item);
+  const call = item.call;
+  const recording = getHistoryPrimaryRecording(item);
+
+  const value = isOutgoingDirection(direction)
+    ? call?.callee_number || call?.callee_phone_number || recording?.callee_number || getHistoryPhone(item)
+    : isIncomingDirection(direction)
+      ? call?.caller_number || call?.caller_phone_number || recording?.caller_number || getHistoryPhone(item)
+      : call?.display_phone || recording?.matched_lead?.phone || getHistoryPhone(item);
+
+  return normalizeMatchPhone(value) || getHistoryPhone(item).toLowerCase();
+};
+
+const countUniqueCustomers = (items: UnifiedCallHistoryItem[]) =>
+  new Set(items.map(getHistoryCustomerNumber).filter(Boolean)).size;
 
 const getMetricCallAgent = (call: ZoomPhoneMetricCall) =>
   call.matched_user?.name || call.caller?.name || call.callee?.name || call.owner?.name || 'Zoom user';
@@ -324,12 +472,15 @@ const Calls: React.FC = () => {
   const [analytics, setAnalytics] = useState<ZoomPhoneAnalyticsResponse>(emptyAnalytics);
   const [inventory, setInventory] = useState<ZoomPhoneInventoryResponse>(emptyInventory);
   const [liveStatus, setLiveStatus] = useState<ZoomPhoneLiveStatusResponse>(emptyLiveStatus);
+  const [crmUsers, setCrmUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
   const [zoomError, setZoomError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('All');
   const [directionFilter, setDirectionFilter] = useState('All');
   const [userFilter, setUserFilter] = useState('All');
+  const [historyPage, setHistoryPage] = useState(1);
+  const [historyPageSize, setHistoryPageSize] = useState(15);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [callQueueLeads, setCallQueueLeads] = useState<Lead[]>([]);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
@@ -339,6 +490,7 @@ const Calls: React.FC = () => {
   const [audioLoadStatus, setAudioLoadStatus] = useState('');
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const recordingPanelRef = useRef<HTMLDivElement | null>(null);
+  const fetchRequestRef = useRef(0);
   const debouncedQuery = useDebouncedValue(query, 220);
 
   const setActiveView = (view: 'live' | 'history') => {
@@ -352,6 +504,8 @@ const Calls: React.FC = () => {
   };
 
   const fetchData = useCallback(async () => {
+    const requestId = fetchRequestRef.current + 1;
+    fetchRequestRef.current = requestId;
     setLoading(true);
     setZoomError(null);
 
@@ -371,6 +525,7 @@ const Calls: React.FC = () => {
         setAnalytics(emptyAnalytics);
         setInventory(emptyInventory);
         setLiveStatus(emptyLiveStatus);
+        setCrmUsers([]);
         return;
       }
 
@@ -389,17 +544,19 @@ const Calls: React.FC = () => {
         setAnalytics(emptyAnalytics);
         setInventory(emptyInventory);
         setLiveStatus(emptyLiveStatus);
+        setCrmUsers([]);
         setZoomError(`Zoom Phone is not configured. Missing: ${statusResponse.data.missing.join(', ')}`);
         return;
       }
 
       const today = formatDateInput(new Date());
-      const [analyticsResponse, inventoryResponse, liveResponse] = await Promise.all([
+      const [analyticsResponse, inventoryResponse, liveResponse, usersResponse] = await Promise.all([
         zoomPhoneApi.getAnalytics({
           from: fromDate,
           to: toDate,
           pageSize: 300,
-          maxPages: 5
+          maxPages: 5,
+          includeRecordings: false
         }),
         zoomPhoneApi.getInventory({
           pageSize: 300,
@@ -410,11 +567,42 @@ const Calls: React.FC = () => {
           to: today,
           pageSize: 100,
           maxPages: 2
-        })
+        }),
+        userApi.getAllUsers()
       ]);
 
       if (analyticsResponse.success && analyticsResponse.data) {
         setAnalytics(analyticsResponse.data);
+
+        zoomPhoneApi
+          .getAccountRecordings({
+            from: fromDate,
+            to: toDate,
+            pageSize: 300,
+            maxPages: 5
+          })
+          .then((recordingsResponse) => {
+            if (fetchRequestRef.current !== requestId) return;
+            if (recordingsResponse.success && recordingsResponse.data) {
+              setAnalytics((current) => ({
+                ...current,
+                recordings: recordingsResponse.data?.recordings || [],
+                recordings_error: undefined
+              }));
+            } else {
+              setAnalytics((current) => ({
+                ...current,
+                recordings_error: recordingsResponse.message || 'Unable to sync Zoom Phone recordings'
+              }));
+            }
+          })
+          .catch((error) => {
+            if (fetchRequestRef.current !== requestId) return;
+            setAnalytics((current) => ({
+              ...current,
+              recordings_error: error instanceof Error ? error.message : 'Unable to sync Zoom Phone recordings'
+            }));
+          });
       } else {
         setAnalytics(emptyAnalytics);
         setZoomError(analyticsResponse.message || 'Unable to sync Zoom Phone call history');
@@ -433,11 +621,19 @@ const Calls: React.FC = () => {
         setLiveStatus(emptyLiveStatus);
         setZoomError((current) => current || liveResponse.message || 'Unable to sync live Zoom Phone status');
       }
+
+      if (usersResponse.success && usersResponse.data) {
+        setCrmUsers(usersResponse.data);
+      } else {
+        setCrmUsers([]);
+        setZoomError((current) => current || usersResponse.message || 'Unable to load CRM users');
+      }
     } catch (error) {
       setZoomError(error instanceof Error ? error.message : 'Unable to load Zoom Phone data');
       setAnalytics(emptyAnalytics);
       setInventory(emptyInventory);
       setLiveStatus(emptyLiveStatus);
+      setCrmUsers([]);
     } finally {
       setLoading(false);
     }
@@ -467,14 +663,29 @@ const Calls: React.FC = () => {
       };
     });
 
+    const unmatchedRecordings = new Map<string, ZoomPhoneRecording[]>();
+
     analytics.recordings.forEach((recording) => {
       const recordingKey = getRecordingKey(recording);
       if (usedRecordingKeys.has(recordingKey)) return;
 
+      const groupKey = getRecordingCallGroupKey(recording);
+      const current = unmatchedRecordings.get(groupKey) || [];
+      current.push(recording);
+      unmatchedRecordings.set(groupKey, current);
+    });
+
+    unmatchedRecordings.forEach((recordings, groupKey) => {
+      const sortedRecordings = [...recordings].sort((left, right) => {
+        const leftDate = getDateMs(left.date_time || left.end_time) || 0;
+        const rightDate = getDateMs(right.date_time || right.end_time) || 0;
+        return rightDate - leftDate;
+      });
+
       historyItems.push({
-        id: `recording:${recordingKey}`,
-        recording,
-        recordings: [recording]
+        id: `recording:${groupKey}`,
+        recording: sortedRecordings[0],
+        recordings: sortedRecordings
       });
     });
 
@@ -496,49 +707,118 @@ const Calls: React.FC = () => {
   );
 
   const userOptions = useMemo(() => {
-    const options = new Map<string, { label: string; meta: string }>();
+    const options = new Map<string, UserFilterOption>();
+    const addOption = (
+      value: string,
+      label: unknown,
+      meta: unknown,
+      inactive?: boolean,
+      aliases: unknown[] = []
+    ) => {
+      if (!value.startsWith('crm:')) return;
+
+      const normalizedLabel = toSafeString(label).trim() || 'Zoom user';
+      const normalizedMeta = toSafeString(meta).trim() || 'Zoom Phone';
+      const option: UserFilterOption = {
+        value,
+        label: normalizedLabel,
+        meta: normalizedMeta,
+        inactive,
+        aliases: uniqueStrings([value, normalizedLabel, normalizedMeta, ...aliases])
+      };
+      const duplicate = Array.from(options.values()).find((existing) => {
+        return existing.value === value || userOptionsShareIdentity(option, existing);
+      });
+
+      if (duplicate) {
+        duplicate.aliases = uniqueStrings([...duplicate.aliases, ...option.aliases]);
+        duplicate.inactive = duplicate.inactive && inactive !== false;
+        if (!duplicate.meta.includes('@') && option.meta.includes('@')) {
+          duplicate.meta = option.meta;
+        }
+        return;
+      }
+
+      options.set(value, option);
+    };
+
+    crmUsers.forEach((crmUser) => {
+      addOption(
+        `crm:${crmUser._id}`,
+        crmUser.name,
+        crmUser.email,
+        crmUser.isActive === false,
+        [crmUser.email, crmUser.name]
+      );
+    });
 
     analytics.call_logs.forEach((call) => {
       const key = getCallUserFilterKey(call);
-      if (!options.has(key)) {
-        options.set(key, {
-          label: getCallAgent(call),
-          meta: call.matched_user?.email || call.owner?.phone_number || call.owner?.extension_number || 'Zoom Phone'
-        });
-      }
+      addOption(
+        key,
+        getCallAgent(call),
+        call.matched_user?.email || call.owner?.phone_number || call.owner?.extension_number || 'Zoom Phone',
+        call.matched_user?.isActive === false,
+        [call.matched_user?.email, call.owner?.email, call.user_email, call.caller_email, call.callee_email]
+      );
     });
 
     analytics.recordings.forEach((recording) => {
       const key = getRecordingUserFilterKey(recording);
-      if (!options.has(key)) {
-        options.set(key, {
-          label: getRecordingOwner(recording),
-          meta: recording.matched_user?.email || recording.owner?.phone_number || recording.owner?.extension_number || 'Zoom Phone'
-        });
-      }
+      addOption(
+        key,
+        recording.matched_user?.name || getRecordingOwner(recording),
+        recording.matched_user?.email || recording.owner?.phone_number || recording.owner?.extension_number || 'Zoom Phone',
+        recording.matched_user?.isActive === false,
+        [recording.matched_user?.email, recording.owner?.email, recording.user_email, recording.caller_email, recording.callee_email]
+      );
     });
 
     liveStatus.phone_users.forEach((phoneUser) => {
       const key = phoneUser.matched_user?.id ? `crm:${phoneUser.matched_user.id}` : `zoom:${phoneUser.name || phoneUser.email}`;
-      if (!options.has(key)) {
-        options.set(key, {
-          label: phoneUser.matched_user?.name || phoneUser.name || phoneUser.email || 'Zoom user',
-          meta: phoneUser.matched_user?.email || phoneUser.email || phoneUser.connected_numbers.join(', ') || 'Zoom Phone'
-        });
-      }
+      addOption(
+        key,
+        phoneUser.matched_user?.name || phoneUser.name || phoneUser.email || 'Zoom user',
+        phoneUser.matched_user?.email || phoneUser.email || phoneUser.connected_numbers.join(', ') || 'Zoom Phone',
+        phoneUser.matched_user?.isActive === false,
+        [phoneUser.matched_user?.email, phoneUser.email]
+      );
     });
 
-    return Array.from(options.entries())
-      .map(([value, option]) => ({ value, ...option }))
+    const preparedOptions = Array.from(options.values())
+      .sort((a, b) => Number(b.value.startsWith('crm:')) - Number(a.value.startsWith('crm:')));
+    const canonicalOptions = preparedOptions.filter((option) => option.value.startsWith('crm:'));
+
+    return preparedOptions
+      .filter((option) => !userOptionLooksDuplicate(option, canonicalOptions))
       .sort((a, b) => a.label.localeCompare(b.label));
-  }, [analytics.call_logs, analytics.recordings, liveStatus.phone_users]);
+  }, [analytics.call_logs, analytics.recordings, crmUsers, liveStatus.phone_users]);
+
+  const selectedUserOption = useMemo(
+    () => userOptions.find((option) => option.value === userFilter),
+    [userFilter, userOptions]
+  );
+
+  useEffect(() => {
+    if (userFilter !== 'All' && !selectedUserOption) {
+      setUserFilter('All');
+    }
+  }, [selectedUserOption, userFilter]);
+
+  useEffect(() => {
+    setHistoryPage(1);
+  }, [debouncedQuery, directionFilter, fromDate, statusFilter, toDate, userFilter, historyPageSize]);
 
   const filteredHistory = useMemo(() => {
     const normalizedQuery = debouncedQuery.trim().toLowerCase();
+    const selectedUserEmails = selectedUserOption
+      ? getUserFilterEmails([selectedUserOption.label, selectedUserOption.meta, ...selectedUserOption.aliases])
+      : [];
 
     return unifiedHistory.filter((item) => {
       const call = item.call;
       const recording = item.recording;
+      const matchedUser = getHistoryMatchedUser(item);
       const searchable = [
         getHistoryName(item),
         getHistoryPhone(item),
@@ -572,11 +852,179 @@ const Calls: React.FC = () => {
       const matchesSearch = !normalizedQuery || searchable.includes(normalizedQuery);
       const matchesStatus = statusFilter === 'All' || getHistoryStatus(item) === statusFilter;
       const matchesDirection = directionFilter === 'All' || getHistoryDirection(item) === directionFilter;
-      const matchesUser = userFilter === 'All' || getHistoryUserFilterKey(item) === userFilter;
+      const historyUserEmails = getUserFilterEmails([
+        matchedUser?.email,
+        call?.owner?.email,
+        recording?.owner?.email,
+        call?.user_email,
+        recording?.user_email,
+        call?.caller_email,
+        call?.callee_email,
+        recording?.caller_email,
+        recording?.callee_email
+      ]);
+      const matchesUser =
+        userFilter === 'All' ||
+        getHistoryUserFilterKey(item) === userFilter ||
+        selectedUserEmails.some((selectedEmail) => historyUserEmails.includes(selectedEmail));
 
       return matchesSearch && matchesStatus && matchesDirection && matchesUser;
     });
-  }, [debouncedQuery, directionFilter, statusFilter, unifiedHistory, userFilter]);
+  }, [debouncedQuery, directionFilter, statusFilter, unifiedHistory, userFilter, selectedUserOption]);
+
+  const filteredReport = useMemo(() => {
+    const incomingItems = filteredHistory.filter((item) => isIncomingDirection(getHistoryDirection(item)));
+    const outgoingItems = filteredHistory.filter((item) => isOutgoingDirection(getHistoryDirection(item)));
+    const missedItems = filteredHistory.filter((item) => isMissedHistoryItem(item));
+    const connectedItems = filteredHistory.filter((item) => isConnectedHistoryItem(item));
+    const totalCalls = countUniqueCustomers(filteredHistory);
+    const incomingCalls = countUniqueCustomers(incomingItems);
+    const outgoingCalls = countUniqueCustomers(outgoingItems);
+    const missedCalls = countUniqueCustomers(missedItems);
+    const connectedCalls = countUniqueCustomers(connectedItems);
+    const totalTalkTime = filteredHistory.reduce((total, item) => total + getHistoryDuration(item), 0);
+    const recordedCallCount = filteredHistory.filter(hasHistoryRecording).length;
+    const recordingFileCount = filteredHistory.reduce((total, item) => total + getHistoryRecordingCount(item), 0);
+
+    return {
+      totalCalls,
+      totalCallAttempts: filteredHistory.length,
+      incomingCalls,
+      incomingCallAttempts: incomingItems.length,
+      outgoingCalls,
+      outgoingCallAttempts: outgoingItems.length,
+      missedCalls,
+      connectedCalls,
+      totalTalkTime,
+      recordedCallCount,
+      recordingFileCount,
+      averageCallDuration: totalCalls ? Math.round(totalTalkTime / totalCalls) : 0,
+      answerRate: totalCalls ? Math.round((connectedCalls / totalCalls) * 100) : 0
+    };
+  }, [filteredHistory]);
+
+  const historyTotalPages = Math.max(1, Math.ceil(filteredHistory.length / historyPageSize));
+  const safeHistoryPage = Math.min(historyPage, historyTotalPages);
+  const historyStartIndex = filteredHistory.length === 0 ? 0 : (safeHistoryPage - 1) * historyPageSize;
+  const paginatedHistory = filteredHistory.slice(historyStartIndex, historyStartIndex + historyPageSize);
+
+  const filteredAgentStats = useMemo(() => {
+    const stats = new Map<
+      string,
+      {
+        agent: string;
+        email?: string;
+        total_calls: number;
+        connected_calls: number;
+        missed_calls: number;
+        total_duration: number;
+        recordings: number;
+        total_numbers: Set<string>;
+        connected_numbers: Set<string>;
+        missed_numbers: Set<string>;
+        recording_numbers: Set<string>;
+      }
+    >();
+
+    filteredHistory.forEach((item) => {
+      const key = getHistoryUserFilterKey(item);
+      const customerNumber = getHistoryCustomerNumber(item);
+      const current =
+        stats.get(key) ||
+        {
+          agent: getHistoryAgent(item),
+          email: getHistoryUserEmail(item),
+          total_calls: 0,
+          connected_calls: 0,
+          missed_calls: 0,
+          total_duration: 0,
+          recordings: 0,
+          total_numbers: new Set<string>(),
+          connected_numbers: new Set<string>(),
+          missed_numbers: new Set<string>(),
+          recording_numbers: new Set<string>()
+        };
+      if (customerNumber) current.total_numbers.add(customerNumber);
+      current.total_duration += getHistoryDuration(item);
+      if (isConnectedHistoryItem(item) && customerNumber) current.connected_numbers.add(customerNumber);
+      if (isMissedHistoryItem(item) && customerNumber) current.missed_numbers.add(customerNumber);
+      if (hasHistoryRecording(item) && customerNumber) current.recording_numbers.add(customerNumber);
+      stats.set(key, current);
+    });
+
+    return Array.from(stats.values())
+      .map((agent) => ({
+        agent: agent.agent,
+        email: agent.email,
+        total_calls: agent.total_numbers.size,
+        connected_calls: agent.connected_numbers.size,
+        missed_calls: agent.missed_numbers.size,
+        recordings: agent.recording_numbers.size,
+        total_duration: agent.total_duration,
+        average_call_duration: agent.total_numbers.size ? Math.round(agent.total_duration / agent.total_numbers.size) : 0,
+        answer_rate: agent.total_numbers.size ? Math.round((agent.connected_numbers.size / agent.total_numbers.size) * 100) : 0
+      }))
+      .sort((left, right) => right.total_calls - left.total_calls);
+  }, [filteredHistory]);
+
+  const filteredDailyStats = useMemo(() => {
+    const stats = new Map<
+      string,
+      {
+        date: string;
+        total_calls: number;
+        incoming_calls: number;
+        outgoing_calls: number;
+        connected_calls: number;
+        recorded_calls: number;
+        total_numbers: Set<string>;
+        incoming_numbers: Set<string>;
+        outgoing_numbers: Set<string>;
+        connected_numbers: Set<string>;
+        recorded_numbers: Set<string>;
+      }
+    >();
+
+    filteredHistory.forEach((item) => {
+      const startedAt = getHistoryStartedAt(item);
+      const date = startedAt && !Number.isNaN(new Date(startedAt).getTime())
+        ? formatDateInput(new Date(startedAt))
+        : 'Unknown date';
+      const customerNumber = getHistoryCustomerNumber(item);
+      const current =
+        stats.get(date) ||
+        {
+          date,
+          total_calls: 0,
+          incoming_calls: 0,
+          outgoing_calls: 0,
+          connected_calls: 0,
+          recorded_calls: 0,
+          total_numbers: new Set<string>(),
+          incoming_numbers: new Set<string>(),
+          outgoing_numbers: new Set<string>(),
+          connected_numbers: new Set<string>(),
+          recorded_numbers: new Set<string>()
+        };
+      if (customerNumber) current.total_numbers.add(customerNumber);
+      if (isIncomingDirection(getHistoryDirection(item)) && customerNumber) current.incoming_numbers.add(customerNumber);
+      if (isOutgoingDirection(getHistoryDirection(item)) && customerNumber) current.outgoing_numbers.add(customerNumber);
+      if (isConnectedHistoryItem(item) && customerNumber) current.connected_numbers.add(customerNumber);
+      if (hasHistoryRecording(item) && customerNumber) current.recorded_numbers.add(customerNumber);
+      stats.set(date, current);
+    });
+
+    return Array.from(stats.values())
+      .map((day) => ({
+        date: day.date,
+        total_calls: day.total_numbers.size,
+        incoming_calls: day.incoming_numbers.size,
+        outgoing_calls: day.outgoing_numbers.size,
+        connected_calls: day.connected_numbers.size,
+        recorded_calls: day.recorded_numbers.size
+      }))
+      .sort((left, right) => right.date.localeCompare(left.date));
+  }, [filteredHistory]);
 
   useEffect(() => {
     if (filteredHistory.length === 0) {
@@ -589,8 +1037,22 @@ const Calls: React.FC = () => {
     }
   }, [filteredHistory, selectedId]);
 
+  useEffect(() => {
+    if (historyPage > historyTotalPages) {
+      setHistoryPage(historyTotalPages);
+    }
+  }, [historyPage, historyTotalPages]);
+
+  useEffect(() => {
+    setSelectedId(null);
+    setAudioUrl(null);
+    setAudioCallId(null);
+    setAudioLoadProgress(0);
+    setAudioLoadStatus('');
+    setRecordingLoading(false);
+  }, [debouncedQuery, directionFilter, fromDate, statusFilter, toDate, userFilter]);
+
   const selectedHistoryItem = filteredHistory.find((item) => item.id === selectedId) || filteredHistory[0];
-  const summary = analytics.summary;
   const liveInventory = liveStatus.inventory.summary.total_numbers > 0 ? liveStatus.inventory : inventory;
   const liveInventorySummary = liveInventory.summary;
   const unassignedQueueCount = callQueueLeads.filter((lead) => !lead.assignedTo && !lead.assignedToUser).length;
@@ -616,7 +1078,8 @@ const Calls: React.FC = () => {
     if (!recordingId) return;
     if (audioUrl && audioCallId === recordingKey) {
       scrollToRecordingPanel();
-      audioRef.current?.play().catch(() => {
+      audioRef.current?.play().catch((error) => {
+        if (isBenignPlayInterruption(error)) return;
         setAudioLoadStatus('Press play on the audio control to start playback');
       });
       return;
@@ -641,9 +1104,21 @@ const Calls: React.FC = () => {
         audioRef.current.load();
         setAudioLoadProgress(36);
         setAudioLoadStatus('Starting playback...');
-        await audioRef.current.play();
+        await audioRef.current.play().catch((error) => {
+          if (isBenignPlayInterruption(error)) {
+            setAudioLoadStatus('Audio ready. Press play to start.');
+            setRecordingLoading(false);
+            return;
+          }
+          throw error;
+        });
       }
     } catch (error) {
+      if (isBenignPlayInterruption(error)) {
+        setAudioLoadStatus('Audio ready. Press play to start.');
+        setRecordingLoading(false);
+        return;
+      }
       setZoomError(error instanceof Error ? error.message : 'Unable to load this Zoom Phone recording');
       setAudioLoadStatus('Unable to load recording');
       setRecordingLoading(false);
@@ -741,50 +1216,50 @@ const Calls: React.FC = () => {
   const historyCards = [
     {
       label: 'Total Calls',
-      value: summary.total_calls,
-      helper: `${analytics.pages_scanned} Zoom page${analytics.pages_scanned === 1 ? '' : 's'} scanned`,
+      value: filteredReport.totalCalls,
+      helper: `Including duplicate calls: ${filteredReport.totalCallAttempts}`,
       icon: PhoneCall,
       tone: 'metric-card--blue'
     },
     {
       label: 'Incoming',
-      value: summary.incoming_calls,
-      helper: 'Customer calls received',
+      value: filteredReport.incomingCalls,
+      helper: `Including duplicate calls: ${filteredReport.incomingCallAttempts}`,
       icon: Headphones,
       tone: 'metric-card--green'
     },
     {
       label: 'Outgoing',
-      value: summary.outgoing_calls,
-      helper: 'Agent calls placed',
+      value: filteredReport.outgoingCalls,
+      helper: `Including duplicate calls: ${filteredReport.outgoingCallAttempts}`,
       icon: BarChart3,
       tone: 'metric-card--amber'
     },
     {
       label: 'Missed',
-      value: summary.missed_calls,
+      value: filteredReport.missedCalls,
       helper: 'Needs callback follow-up',
       icon: Voicemail,
       tone: 'metric-card--rose'
     },
     {
       label: 'Answer Rate',
-      value: `${summary.answer_rate}%`,
-      helper: `${summary.connected_calls} connected calls`,
+      value: `${filteredReport.answerRate}%`,
+      helper: `${filteredReport.connectedCalls} connected calls`,
       icon: CheckCircle,
       tone: 'metric-card--green'
     },
     {
       label: 'Avg Duration',
-      value: formatDuration(summary.average_call_duration),
-      helper: `${formatTalkTime(summary.total_talk_time)} total talk time`,
+      value: formatDuration(filteredReport.averageCallDuration),
+      helper: `${formatTalkTime(filteredReport.totalTalkTime)} total talk time`,
       icon: Clock,
       tone: 'metric-card--blue'
     },
     {
       label: 'Recordings',
-      value: analytics.recordings.length || summary.recorded_calls,
-      helper: `${analytics.recordings.length} recording files synced`,
+      value: filteredReport.recordedCallCount,
+      helper: `${filteredReport.recordingFileCount} recording file${filteredReport.recordingFileCount === 1 ? '' : 's'} matched`,
       icon: Mic,
       tone: 'metric-card--amber'
     }
@@ -875,7 +1350,10 @@ const Calls: React.FC = () => {
             {liveCards.map((metric) => {
               const Icon = metric.icon;
               return (
-                <div key={metric.label} className={`metric-card ${metric.tone}`}>
+	                <div
+	                  key={metric.label}
+	                  className={`metric-card ${metric.tone} ${metric.label === 'Recordings' ? 'metric-card--wide' : ''}`}
+	                >
                   <div className="metric-card__top">
                     <p className="metric-card__label">{metric.label}</p>
                     <Icon className="h-5 w-5" />
@@ -948,8 +1426,9 @@ const Calls: React.FC = () => {
                     <div key={phoneUser.id || phoneUser.phone_user_id || phoneUser.email} className="rounded-lg border border-gray-200 p-4">
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
-                          <p className="truncate font-extrabold text-gray-950">
-                            {phoneUser.matched_user?.name || phoneUser.name || phoneUser.email || 'Zoom user'}
+                          <p className="flex min-w-0 items-center gap-2 font-extrabold text-gray-950">
+                            <span className="truncate">{phoneUser.matched_user?.name || phoneUser.name || phoneUser.email || 'Zoom user'}</span>
+                            <InactiveUserDot inactive={phoneUser.matched_user?.isActive === false} />
                           </p>
                           <p className="mt-1 truncate text-sm text-gray-500">
                             {phoneUser.matched_user?.email || phoneUser.email || 'No email returned'}
@@ -1041,8 +1520,8 @@ const Calls: React.FC = () => {
         <>
           <div className="card">
             <div className="card-body">
-              <div className="grid grid-cols-1 gap-3 xl:grid-cols-[150px_150px_1fr_220px_200px_200px]">
-                <label className="space-y-1">
+              <div className="call-filter-grid">
+                <label className="call-filter-date space-y-1">
                   <span className="text-xs font-bold uppercase text-gray-500">From</span>
                   <input
                     type="date"
@@ -1052,7 +1531,7 @@ const Calls: React.FC = () => {
                     onChange={(event) => setFromDate(event.target.value)}
                   />
                 </label>
-                <label className="space-y-1">
+                <label className="call-filter-date space-y-1">
                   <span className="text-xs font-bold uppercase text-gray-500">To</span>
                   <input
                     type="date"
@@ -1062,7 +1541,7 @@ const Calls: React.FC = () => {
                     onChange={(event) => setToDate(event.target.value)}
                   />
                 </label>
-                <div className="relative self-end">
+                <div className="call-filter-search relative self-end">
                   <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
                   <input
                     type="search"
@@ -1072,15 +1551,15 @@ const Calls: React.FC = () => {
                     placeholder="Search lead name, phone, email, agent, result, or site"
                   />
                 </div>
-                <select value={userFilter} onChange={(event) => setUserFilter(event.target.value)} className="form-input self-end" aria-label="Filter by user">
+                <select value={userFilter} onChange={(event) => setUserFilter(event.target.value)} className="call-filter-user form-input self-end" aria-label="Filter by user">
                   <option value="All">All users</option>
                   {userOptions.map((option) => (
                     <option key={option.value} value={option.value}>
-                      {option.label}
+                      {option.inactive ? `${option.label} - inactive` : option.label}
                     </option>
                   ))}
                 </select>
-                <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="form-input self-end" aria-label="Call status">
+                <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="call-filter-status form-input self-end" aria-label="Call status">
                   <option value="All">All statuses</option>
                   {availableStatuses.map((status) => (
                     <option key={status} value={status}>
@@ -1088,7 +1567,7 @@ const Calls: React.FC = () => {
                     </option>
                   ))}
                 </select>
-                <select value={directionFilter} onChange={(event) => setDirectionFilter(event.target.value)} className="form-input self-end" aria-label="Call direction">
+                <select value={directionFilter} onChange={(event) => setDirectionFilter(event.target.value)} className="call-filter-direction form-input self-end" aria-label="Call direction">
                   <option value="All">All directions</option>
                   {availableDirections.map((direction) => (
                     <option key={direction} value={direction}>
@@ -1099,6 +1578,46 @@ const Calls: React.FC = () => {
               </div>
             </div>
           </div>
+
+          {selectedUserOption && (
+            <div className="card">
+              <div className="card-body">
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                  <div className="flex items-center gap-3">
+                    <span className="avatar">
+                      <UserRound className="h-4 w-4" />
+                    </span>
+                    <div>
+                      <p className="text-xs font-bold uppercase text-gray-500">Selected user report</p>
+                      <h2 className="flex items-center gap-2 text-lg font-extrabold text-gray-950">
+                        <span>{selectedUserOption.label}</span>
+                        <InactiveUserDot inactive={selectedUserOption.inactive} />
+                      </h2>
+                      <p className="text-sm text-gray-500">{selectedUserOption.meta}</p>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
+                    <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                      <p className="font-extrabold text-gray-950">{filteredReport.totalCalls}</p>
+                      <p className="text-gray-500">Calls</p>
+                    </div>
+                    <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                      <p className="font-extrabold text-gray-950">{filteredReport.connectedCalls}</p>
+                      <p className="text-gray-500">Connected</p>
+                    </div>
+                    <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                      <p className="font-extrabold text-gray-950">{formatTalkTime(filteredReport.totalTalkTime)}</p>
+                      <p className="text-gray-500">Talk time</p>
+                    </div>
+                    <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                      <p className="font-extrabold text-gray-950">{filteredReport.answerRate}%</p>
+                      <p className="text-gray-500">Answer rate</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
 
           <div className="metric-grid">
             {historyCards.map((metric) => {
@@ -1122,13 +1641,14 @@ const Calls: React.FC = () => {
                 <div>
                   <h2 className="card-title">Call History</h2>
                   <p className="card-subtitle">
-                    {filteredHistory.length} calls and recordings from {fromDate} to {toDate}
+                    Showing {filteredHistory.length === 0 ? 0 : historyStartIndex + 1}-
+                    {Math.min(historyStartIndex + historyPageSize, filteredHistory.length)} of {filteredHistory.length} call logs from {fromDate} to {toDate}
                   </p>
                 </div>
                 <span className="status-pill status-pill--slate">{unifiedHistory.length} synced</span>
               </div>
-              <div className="overflow-x-auto">
-                <table className="table min-w-[820px]">
+              <div className="call-history-scroll">
+                <table className="table calls-history-table">
                   <thead>
                     <tr>
                       <th>Lead / Number</th>
@@ -1140,7 +1660,7 @@ const Calls: React.FC = () => {
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredHistory.map((item) => {
+                    {paginatedHistory.map((item) => {
                       const recordingCount = getHistoryRecordingCount(item);
                       return (
                         <tr
@@ -1154,25 +1674,33 @@ const Calls: React.FC = () => {
                             }
                           }}
                         >
-                          <td>
+                          <td data-label="Lead / Number">
                             <div>
                               <p className="font-bold text-gray-900">{getHistoryName(item)}</p>
                               <p className="text-xs text-gray-500">{getHistoryPhone(item)}</p>
                               {getHistoryLeadEmail(item) && <p className="text-xs text-gray-400">{getHistoryLeadEmail(item)}</p>}
                             </div>
                           </td>
-                          <td>
-                            <span className={directionClass(getHistoryDirection(item))}>{getHistoryDirection(item)}</span>
-                          </td>
-                          <td>
-                            <span className={statusClass(getHistoryStatus(item))}>{getHistoryStatus(item)}</span>
-                          </td>
-                          <td>{formatDuration(getHistoryDuration(item))}</td>
-                          <td>
-                            <p className="font-semibold text-gray-800">{getHistoryAgent(item)}</p>
+                          <td data-label="Direction">
+                            <div className="inline-flex min-w-[96px] flex-col items-start gap-1">
+                              <span className={directionClass(getHistoryDirection(item))}>{getHistoryDirection(item)}</span>
+                              <span className="whitespace-nowrap text-[11px] font-semibold uppercase tracking-wide text-gray-400">
+                                {formatCompactDateTime(getHistoryStartedAt(item))}
+                              </span>
+                            </div>
+	                          </td>
+	                          <td data-label="Status">
+	                            <span className="font-semibold text-gray-700">{getHistoryStatus(item)}</span>
+	                          </td>
+                          <td data-label="Duration">{formatDuration(getHistoryDuration(item))}</td>
+                          <td data-label="User">
+                            <p className="flex items-center gap-2 font-semibold text-gray-800">
+                              <span>{getHistoryAgent(item)}</span>
+                              <InactiveUserDot inactive={getHistoryMatchedUser(item)?.isActive === false} />
+                            </p>
                             {getHistoryUserEmail(item) && <p className="text-xs text-gray-500">{getHistoryUserEmail(item)}</p>}
                           </td>
-                          <td>
+                          <td data-label="Recording">
                             {recordingCount > 0 ? (
                               <span className="status-pill status-pill--green">
                                 {recordingCount} file{recordingCount === 1 ? '' : 's'}
@@ -1187,6 +1715,58 @@ const Calls: React.FC = () => {
                   </tbody>
                 </table>
               </div>
+              {filteredHistory.length > 0 && (
+                <div className="flex flex-col gap-3 border-t border-gray-200 bg-gray-50/70 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex flex-wrap items-center gap-3 text-sm text-gray-600">
+                    <label htmlFor="call-history-page-size" className="font-semibold text-gray-700">
+                      Rows per page
+                    </label>
+                    <select
+                      id="call-history-page-size"
+                      className="h-9 rounded-lg border border-gray-300 bg-white px-3 text-sm font-semibold text-gray-900 shadow-sm outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+                      value={historyPageSize}
+                      onChange={(event) => setHistoryPageSize(Number(event.target.value))}
+                      aria-label="Call history rows per page"
+                    >
+                      {[10, 15, 25, 50].map((size) => (
+                        <option key={size} value={size}>
+                          {size}
+                        </option>
+                      ))}
+                    </select>
+                    <span className="text-gray-400">|</span>
+                    <span>
+                      {historyStartIndex + 1}-{Math.min(historyStartIndex + historyPageSize, filteredHistory.length)} of {filteredHistory.length}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between gap-3 sm:justify-end">
+                    <span className="rounded-full bg-white px-3 py-1 text-sm font-semibold text-gray-700 shadow-sm ring-1 ring-gray-200">
+                      Page {safeHistoryPage} / {historyTotalPages}
+                    </span>
+                    <div className="flex items-center overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm">
+                      <button
+                        type="button"
+                        className="flex h-9 w-10 items-center justify-center text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:text-gray-300"
+                        onClick={() => setHistoryPage((page) => Math.max(1, page - 1))}
+                        disabled={safeHistoryPage === 1}
+                        aria-label="Previous page"
+                      >
+                        <ChevronLeft className="h-4 w-4" />
+                      </button>
+                      <div className="h-9 w-px bg-gray-200" />
+                      <button
+                        type="button"
+                        className="flex h-9 w-10 items-center justify-center text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:text-gray-300"
+                        onClick={() => setHistoryPage((page) => Math.min(historyTotalPages, page + 1))}
+                        disabled={safeHistoryPage === historyTotalPages}
+                        aria-label="Next page"
+                      >
+                        <ChevronRight className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
               {!loading && filteredHistory.length === 0 && (
                 <div className="py-12 text-center">
                   <Mic className="mx-auto mb-3 h-10 w-10 text-gray-300" />
@@ -1210,7 +1790,7 @@ const Calls: React.FC = () => {
                         'Zoom Phone record'}
                     </p>
                   </div>
-                  <span className={statusClass(getHistoryStatus(selectedHistoryItem))}>{getHistoryStatus(selectedHistoryItem)}</span>
+	                  <span className="text-sm font-semibold text-gray-600">{getHistoryStatus(selectedHistoryItem)}</span>
                 </div>
                 <div className="card-body space-y-5">
                   <div className="flex items-start gap-3">
@@ -1232,10 +1812,13 @@ const Calls: React.FC = () => {
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="call-detail-metrics">
                     <div className="rounded-lg border border-gray-200 p-3">
                       <p className="text-xs font-bold uppercase text-gray-500">User</p>
-                      <p className="mt-1 font-bold text-gray-900">{getHistoryAgent(selectedHistoryItem)}</p>
+                      <p className="mt-1 flex items-center gap-2 font-bold text-gray-900">
+                        <span>{getHistoryAgent(selectedHistoryItem)}</span>
+                        <InactiveUserDot inactive={getHistoryMatchedUser(selectedHistoryItem)?.isActive === false} />
+                      </p>
                     </div>
                     <div className="rounded-lg border border-gray-200 p-3">
                       <p className="text-xs font-bold uppercase text-gray-500">Duration</p>
@@ -1265,7 +1848,7 @@ const Calls: React.FC = () => {
                     <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
                       {hasHistoryRecording(selectedHistoryItem) ? (
                         <div className="space-y-3">
-                          <div className="flex flex-wrap items-center gap-2">
+                          <div className="recording-actions">
                             <button
                               type="button"
                               className="btn btn-secondary"
@@ -1287,7 +1870,7 @@ const Calls: React.FC = () => {
                           </div>
                           <div className="space-y-3">
                             {(recordingLoading || (audioUrl && audioCallId === selectedHistoryItem.id)) && (
-                              <div className="rounded-lg border border-blue-100 bg-white p-3">
+                              <div className="recording-progress rounded-lg border border-blue-100 bg-white p-3">
                                 <div className="mb-2 flex items-center justify-between text-xs font-bold text-blue-700">
                                   <span>{audioLoadStatus || 'Ready to load recording'}</span>
                                   <span>{audioLoadProgress}%</span>
@@ -1308,7 +1891,7 @@ const Calls: React.FC = () => {
                                 controls
                                 crossOrigin="anonymous"
                                 preload="metadata"
-                                className="w-full"
+                                className="recording-audio"
                               src={audioCallId === selectedHistoryItem.id ? audioUrl || undefined : undefined}
                                 onLoadStart={() => {
                                   setRecordingLoading(true);
@@ -1335,6 +1918,7 @@ const Calls: React.FC = () => {
                                 }}
                                 onError={() => {
                                   setRecordingLoading(false);
+                                  if (!audioUrl || audioCallId !== selectedHistoryItem.id) return;
                                   setAudioLoadStatus('Unable to play recording');
                                   const mediaError = audioRef.current?.error;
                                   const errorCode = mediaError?.code ? ` Media error code: ${mediaError.code}.` : '';
@@ -1390,14 +1974,12 @@ const Calls: React.FC = () => {
                 </div>
               </div>
               <div className="card-body space-y-3">
-                {analytics.agent_stats.map((agent) => (
+                {filteredAgentStats.map((agent) => (
                   <div key={agent.agent} className="rounded-lg border border-gray-200 p-4">
                     <div className="flex items-start justify-between gap-3">
                       <div>
                         <p className="font-extrabold text-gray-950">{agent.agent}</p>
-                        <p className="text-sm text-gray-500">
-                          {agent.extension_number ? `Ext ${agent.extension_number}` : agent.phone_number || 'Zoom Phone'}
-                        </p>
+                        <p className="text-sm text-gray-500">{agent.email || 'Zoom Phone'}</p>
                       </div>
                       <span className="status-pill status-pill--blue">{agent.total_calls} calls</span>
                     </div>
@@ -1421,7 +2003,7 @@ const Calls: React.FC = () => {
                     </div>
                   </div>
                 ))}
-                {analytics.agent_stats.length === 0 && <p className="text-sm text-gray-500">No user performance records in this range.</p>}
+                {filteredAgentStats.length === 0 && <p className="text-sm text-gray-500">No user performance records in this range.</p>}
               </div>
             </div>
 
@@ -1433,7 +2015,7 @@ const Calls: React.FC = () => {
                 </div>
               </div>
               <div className="card-body space-y-3">
-                {analytics.daily_stats.map((day) => (
+                {filteredDailyStats.map((day) => (
                   <div key={day.date} className="rounded-lg border border-gray-200 p-4">
                     <div className="flex items-center justify-between">
                       <p className="font-extrabold text-gray-950">{day.date}</p>
@@ -1442,7 +2024,7 @@ const Calls: React.FC = () => {
                     <div className="mt-3 h-2 overflow-hidden rounded-full bg-gray-100">
                       <div
                         className="h-full rounded-full bg-blue-600"
-                        style={{ width: `${summary.total_calls ? Math.min((day.total_calls / summary.total_calls) * 100, 100) : 0}%` }}
+                        style={{ width: `${filteredReport.totalCalls ? Math.min((day.total_calls / filteredReport.totalCalls) * 100, 100) : 0}%` }}
                       />
                     </div>
                     <div className="mt-3 grid grid-cols-4 gap-3 text-xs text-gray-500">
@@ -1453,7 +2035,7 @@ const Calls: React.FC = () => {
                     </div>
                   </div>
                 ))}
-                {analytics.daily_stats.length === 0 && <p className="text-sm text-gray-500">No daily trend records in this range.</p>}
+                {filteredDailyStats.length === 0 && <p className="text-sm text-gray-500">No daily trend records in this range.</p>}
               </div>
             </div>
           </div>
