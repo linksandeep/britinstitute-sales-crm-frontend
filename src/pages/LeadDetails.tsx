@@ -1352,6 +1352,18 @@ const LeadDetails: React.FC = () => {
                   <strong>{lead.metaCreatedTime ? new Date(lead.metaCreatedTime).toLocaleString() : 'Not supplied'}</strong>
                 </div>
                 <div className="lead-summary-row">
+                  <span>Submitted name</span>
+                  <strong>{lead.metaOriginalName || 'Not supplied'}</strong>
+                </div>
+                <div className="lead-summary-row">
+                  <span>Submitted email</span>
+                  <strong>{lead.metaOriginalEmail || 'Not supplied'}</strong>
+                </div>
+                <div className="lead-summary-row">
+                  <span>Submitted phone</span>
+                  <strong>{lead.metaOriginalPhone || 'Not supplied'}</strong>
+                </div>
+                <div className="lead-summary-row">
                   <span>Last feedback</span>
                   <strong>
                     {lead.metaFeedbackLastStatus
@@ -1363,6 +1375,14 @@ const LeadDetails: React.FC = () => {
                   <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">
                     Feedback error: {lead.metaFeedbackLastError}
                   </p>
+                )}
+                {lead.metaRawPayload && (
+                  <details className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs">
+                    <summary className="cursor-pointer font-semibold text-slate-700">Complete submitted payload</summary>
+                    <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words text-slate-600">
+                      {JSON.stringify(lead.metaRawPayload, null, 2)}
+                    </pre>
+                  </details>
                 )}
               </div>
             </div>

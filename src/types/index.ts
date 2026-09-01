@@ -64,7 +64,18 @@ export interface Lead {
   metaFormId?: string;
   metaPageId?: string;
   metaAdId?: string;
+  metaCampaignId?: string;
+  metaAdsetId?: string;
+  metaFbc?: string;
+  metaFbp?: string;
+  metaLeadIdHistory?: string[];
   metaCreatedTime?: string;
+  metaOriginalName?: string;
+  metaOriginalEmail?: string;
+  metaOriginalPhone?: string;
+  metaRawPayload?: Record<string, unknown>;
+  qualifiedAt?: string;
+  convertedAt?: string;
   metaFeedbackLastStatus?: string;
   metaFeedbackLastSentAt?: string;
   metaFeedbackLastError?: string;
