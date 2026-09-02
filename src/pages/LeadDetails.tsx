@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { leadApi, userApi, zoomPhoneApi } from '../lib/api';
+import { leadApi, statusApi, userApi, zoomPhoneApi } from '../lib/api';
 import type {
   Lead,
   LeadPriority,
@@ -54,7 +54,7 @@ interface ReturnState {
   };
 }
 
-const statusOptions: LeadStatus[] = [
+const defaultStatusOptions: LeadStatus[] = [
   'New',
   'Contacted',
   'Follow-up',
@@ -159,6 +159,7 @@ const LeadDetails: React.FC = () => {
   const [users, setUsers] = useState<AppUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [pipelineSavingField, setPipelineSavingField] = useState<'status' | 'priority' | null>(null);
   const [assigning, setAssigning] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [activeTab, setActiveTab] = useState<LeadDetailTab>('activity');
@@ -181,6 +182,7 @@ const LeadDetails: React.FC = () => {
   const [audioLoadingId, setAudioLoadingId] = useState('');
   const [audioLoadProgress, setAudioLoadProgress] = useState(0);
   const [audioLoadStatus, setAudioLoadStatus] = useState('');
+  const [statusOptions, setStatusOptions] = useState<LeadStatus[]>(defaultStatusOptions);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const recordingPlayerRef = useRef<HTMLDivElement | null>(null);
 
@@ -242,6 +244,14 @@ const LeadDetails: React.FC = () => {
     }
   }, [canManage]);
 
+  const fetchStatuses = useCallback(async () => {
+    const response = await statusApi.getStatuses();
+
+    if (response.success && response.data?.length) {
+      setStatusOptions(response.data.map((status) => status.name as LeadStatus));
+    }
+  }, []);
+
   useEffect(() => {
     fetchLead();
   }, [fetchLead]);
@@ -249,6 +259,10 @@ const LeadDetails: React.FC = () => {
   useEffect(() => {
     fetchUsers();
   }, [fetchUsers]);
+
+  useEffect(() => {
+    fetchStatuses();
+  }, [fetchStatuses]);
 
   const sortedNotes = useMemo(
     () =>
@@ -480,6 +494,36 @@ const LeadDetails: React.FC = () => {
     }
 
     setSaving(false);
+  };
+
+  const handlePipelineUpdate = async <Field extends 'status' | 'priority',>(
+    field: Field,
+    value: Lead[Field]
+  ) => {
+    if (!id || !lead || !canEdit || pipelineSavingField || lead[field] === value) return;
+
+    const previousValue = lead[field];
+    setPipelineSavingField(field);
+    setLead((current) => current ? ({ ...current, [field]: value } as Lead) : current);
+    setFormData((current) => ({ ...current, [field]: value }));
+
+    const updateData = field === 'status'
+      ? { status: value as LeadStatus }
+      : { priority: value as LeadPriority };
+    const response = await leadApi.updateLead(id, updateData);
+
+    if (response.success && response.data) {
+      const savedValue = response.data[field];
+      setLead(response.data);
+      setFormData((current) => ({ ...current, [field]: savedValue }));
+      toast.success(`${field === 'status' ? 'Status' : 'Priority'} updated`);
+    } else {
+      setLead((current) => current ? ({ ...current, [field]: previousValue } as Lead) : current);
+      setFormData((current) => ({ ...current, [field]: previousValue }));
+      toast.error(response.message || `Failed to update lead ${field}`);
+    }
+
+    setPipelineSavingField(null);
   };
 
   const handleAssignLead = async () => {
@@ -1126,18 +1170,21 @@ const LeadDetails: React.FC = () => {
             <div className="card-header">
               <div>
                 <h2 className="card-title">Lead Status</h2>
-                <p className="card-subtitle">Pipeline and priority</p>
+                <p className="card-subtitle">
+                  {pipelineSavingField ? `Saving ${pipelineSavingField}...` : 'Pipeline and priority'}
+                </p>
               </div>
             </div>
             <div className="card-body space-y-4">
-              {isEditing ? (
-                <>
-                  <div className="form-group">
-                    <label className="form-label">Status</label>
+              <div className="lead-summary-row">
+                <span>Status</span>
+                {canEdit ? (
                     <select
-                      className="form-input"
-                      value={formData.status}
-                      onChange={(event) => setFormData((current) => ({ ...current, status: event.target.value }))}
+                      aria-label="Lead status"
+                      className="form-input max-w-[180px]"
+                      value={lead.status}
+                      disabled={pipelineSavingField !== null}
+                      onChange={(event) => handlePipelineUpdate('status', event.target.value as LeadStatus)}
                     >
                       {statusOptions.map((status) => (
                         <option key={status} value={status}>
@@ -1145,15 +1192,19 @@ const LeadDetails: React.FC = () => {
                         </option>
                       ))}
                     </select>
-                  </div>
-                  <div className="form-group">
-                    <label className="form-label">Priority</label>
+                ) : (
+                  <span className={statusTone(lead.status)}>{lead.status}</span>
+                )}
+              </div>
+              <div className="lead-summary-row">
+                <span>Priority</span>
+                {canEdit ? (
                     <select
-                      className="form-input"
-                      value={formData.priority}
-                      onChange={(event) =>
-                        setFormData((current) => ({ ...current, priority: event.target.value as LeadPriority }))
-                      }
+                      aria-label="Lead priority"
+                      className="form-input max-w-[180px]"
+                      value={lead.priority}
+                      disabled={pipelineSavingField !== null}
+                      onChange={(event) => handlePipelineUpdate('priority', event.target.value as LeadPriority)}
                     >
                       {priorityOptions.map((priority) => (
                         <option key={priority} value={priority}>
@@ -1161,22 +1212,12 @@ const LeadDetails: React.FC = () => {
                         </option>
                       ))}
                     </select>
-                  </div>
-                </>
-              ) : (
-                <>
-                  <div className="lead-summary-row">
-                    <span>Status</span>
-                    <span className={statusTone(lead.status)}>{lead.status}</span>
-                  </div>
-                  <div className="lead-summary-row">
-                    <span>Priority</span>
-                    <span className={`rounded-full border px-3 py-1 text-xs font-extrabold ${priorityTone(lead.priority)}`}>
-                      {lead.priority}
-                    </span>
-                  </div>
-                </>
-              )}
+                ) : (
+                  <span className={`rounded-full border px-3 py-1 text-xs font-extrabold ${priorityTone(lead.priority)}`}>
+                    {lead.priority}
+                  </span>
+                )}
+              </div>
             </div>
           </div>
 
