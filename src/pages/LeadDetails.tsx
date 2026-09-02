@@ -432,6 +432,16 @@ const LeadDetails: React.FC = () => {
   const handleGoBack = () => {
     const state = location.state as ReturnState | null;
 
+    // The All Leads return target is always the lead's real folder. Building
+    // this from the fetched lead avoids stale or ambiguous navigation state
+    // and guarantees that the restored list has at least this lead's folder.
+    if (state?.returnTo !== '/my-leads' && lead) {
+      const params = new URLSearchParams();
+      params.set('folder', lead.folder || 'Uncategorized');
+      navigate(`/leads?${params.toString()}`, { replace: true });
+      return;
+    }
+
     if (state?.returnTo) {
       const params = new URLSearchParams();
 

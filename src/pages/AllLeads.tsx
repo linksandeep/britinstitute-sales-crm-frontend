@@ -29,22 +29,33 @@ const AllLeads: React.FC = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const initialPage = Number.parseInt(searchParams.get('page') || '', 10);
+  const initialPageSize = Number.parseInt(searchParams.get('size') || '', 10);
+  const initialSearch = searchParams.get('search') || '';
+  const initialFolder = searchParams.get('folder');
+  const initialStatuses = (searchParams.get('statusFilter') || '').split(',').filter(Boolean) as LeadStatus[];
+  const initialSources = (searchParams.get('sourceFilter') || '').split(',').filter(Boolean) as LeadSource[];
+  const initialPriorities = (searchParams.get('priorityFilter') || '').split(',').filter(Boolean) as LeadPriority[];
   const [leads, setLeads] = useState<Lead[]>([]);
   const [loading, setLoading] = useState(true);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [appliedSearchQuery, setAppliedSearchQuery] = useState('');
+  const [searchQuery, setSearchQuery] = useState(initialSearch);
+  const [appliedSearchQuery, setAppliedSearchQuery] = useState(initialSearch);
   const [selectedLeads, setSelectedLeads] = useState<string[]>([]);
-  const [currentPage, setCurrentPage] = useState(1);
+  const [currentPage, setCurrentPage] = useState(Number.isFinite(initialPage) && initialPage > 1 ? initialPage : 1);
   const [totalPages, setTotalPages] = useState(1);
   const [totalLeads, setTotalLeads] = useState(0);
   const [showFilters, setShowFilters] = useState(false);
   const [deleteLead, setDeleteLead] = useState<Lead | null>(null);
   const [availableFolders, setAvailableFolders] = useState<string[]>([]);
-  const [currentView, setCurrentView] = useState<'folders' | 'leads'>('folders');
-  const [selectedFolder, setSelectedFolder] = useState<string | null>(null);
+  const [currentView, setCurrentView] = useState<'folders' | 'leads'>(
+    initialFolder || initialStatuses.length ? 'leads' : 'folders'
+  );
+  const [selectedFolder, setSelectedFolder] = useState<string | null>(initialFolder || initialStatuses[0] || null);
   const [folderStats, setFolderStats] = useState<Record<string, number>>({});
   const [statusStats, setStatusStats] = useState<Record<string, number>>({});
-  const [leadsPerPage, setLeadsPerPage] = useState(10);
+  const [leadsPerPage, setLeadsPerPage] = useState(
+    [10, 25, 50, 100].includes(initialPageSize) ? initialPageSize : 10
+  );
   const [users, setUsers] = useState<User[]>([]);
   const [statusOptions, setStatusOptions] = useState<string[]>([]);
   const [bulkStatus, setBulkStatus] = useState<string>('');
@@ -54,11 +65,11 @@ const AllLeads: React.FC = () => {
 
   // Filter states
   const [filters, setFilters] = useState<LeadFilters>({
-    status: [],
-    source: [],
-    priority: [],
+    status: initialStatuses,
+    source: initialSources,
+    priority: initialPriorities,
     assignedTo: [],
-    folder: []
+    folder: initialFolder ? [initialFolder] : []
   });
 
   const sourceOptions: LeadSource[] = [
@@ -77,56 +88,6 @@ const AllLeads: React.FC = () => {
   const priorityOptions: LeadPriority[] = ['High', 'Medium', 'Low'];
   const assignedToOptions = users.map(user => ({ id: user._id, name: user.name, email: user.email }));
   const getDateFilters = () => toLeadDateFilterParams(dateRange, 'createdAt');
-
-  // Initialize state from URL parameters on component mount
-  useEffect(() => {
-    const page = searchParams.get('page');
-    const size = searchParams.get('size');
-    const search = searchParams.get('search');
-    const folder = searchParams.get('folder');
-    const statusFilter = searchParams.get('statusFilter');
-    const sourceFilter = searchParams.get('sourceFilter');
-    const priorityFilter = searchParams.get('priorityFilter');
-
-    if (page && parseInt(page) > 1) {
-      setCurrentPage(parseInt(page));
-    }
-    if (size && [10, 25, 50, 100].includes(parseInt(size))) {
-      setLeadsPerPage(parseInt(size));
-    }
-    if (search) {
-      setSearchQuery(search);
-      setAppliedSearchQuery(search);
-    }
-    if (folder) {
-      setSelectedFolder(folder);
-      setCurrentView('leads');
-      setFilters(prev => ({ ...prev, folder: [folder] }));
-    }
-    if (statusFilter) {
-      setSelectedFolder(statusFilter.split(',')[0]);
-      setCurrentView('leads');
-    }
-    
-    // Parse filter arrays
-    const newFilters: LeadFilters = { status: [], source: [], priority: [], assignedTo: [], folder: [] };
-    if (statusFilter) {
-      newFilters.status = statusFilter.split(',') as LeadStatus[];
-    }
-    if (sourceFilter) {
-      newFilters.source = sourceFilter.split(',') as LeadSource[];
-    }
-    if (priorityFilter) {
-      newFilters.priority = priorityFilter.split(',') as LeadPriority[];
-    }
-    if (folder) {
-      newFilters.folder = [folder];
-    }
-    
-    if (statusFilter || sourceFilter || priorityFilter) {
-      setFilters(newFilters);
-    }
-  }, []); // Only run on mount
 
   useEffect(() => {
     if (currentView === 'folders') {
