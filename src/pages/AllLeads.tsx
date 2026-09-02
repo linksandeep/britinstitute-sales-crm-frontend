@@ -258,6 +258,9 @@ const AllLeads: React.FC = () => {
     setSearchQuery('');
     setAppliedSearchQuery('');
     setCurrentPage(1);
+    // Keep the active folder in the URL so the browser Back button can
+    // reconstruct this view after visiting a lead's detail page.
+    navigate(`/leads?folder=${encodeURIComponent(folder)}`, { replace: true });
   };
 
   const handleBackToFolders = () => {
@@ -268,6 +271,21 @@ const AllLeads: React.FC = () => {
     setDateRange({ fromDate: '', toDate: '' });
     setCurrentPage(1);
     setSelectedLeads([]);
+    navigate('/leads', { replace: true });
+  };
+
+  const openLeadDetails = (leadId: string) => {
+    navigate(`/leads/${leadId}`, {
+      state: {
+        returnTo: '/leads',
+        currentPage,
+        leadsPerPage,
+        filters,
+        searchQuery,
+        currentView,
+        selectedFolder
+      }
+    });
   };
 
   const handlePageChange = (page: number) => {
@@ -903,7 +921,7 @@ const AllLeads: React.FC = () => {
                 <tr 
                   key={lead._id} 
                   className={`transition-colors cursor-pointer ${getPriorityRowColor(lead.priority)}`}
-                  onClick={() => navigate(`/leads/${lead._id}`)}
+                  onClick={() => openLeadDetails(lead._id)}
                 >
                   <td className="whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
                     <input
@@ -981,17 +999,7 @@ const AllLeads: React.FC = () => {
                   <td className="whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
                     <div className="flex items-center gap-2">
                       <button
-                        onClick={() => navigate(`/leads/${lead._id}`, {
-                          state: {
-                            returnTo: '/leads',
-                            currentPage,
-                            leadsPerPage,
-                            filters,
-                            searchQuery,
-                            currentView,
-                            selectedFolder
-                          }
-                        })}
+                        onClick={() => openLeadDetails(lead._id)}
                         className="text-blue-600 hover:text-blue-800"
                         title="View"
                       >
