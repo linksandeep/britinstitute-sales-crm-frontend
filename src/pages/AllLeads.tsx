@@ -96,11 +96,16 @@ const AllLeads: React.FC = () => {
     }
     if (search) {
       setSearchQuery(search);
+      setAppliedSearchQuery(search);
     }
     if (folder) {
       setSelectedFolder(folder);
       setCurrentView('leads');
       setFilters(prev => ({ ...prev, folder: [folder] }));
+    }
+    if (statusFilter) {
+      setSelectedFolder(statusFilter.split(',')[0]);
+      setCurrentView('leads');
     }
     
     // Parse filter arrays
@@ -261,6 +266,16 @@ const AllLeads: React.FC = () => {
     // Keep the active folder in the URL so the browser Back button can
     // reconstruct this view after visiting a lead's detail page.
     navigate(`/leads?folder=${encodeURIComponent(folder)}`, { replace: true });
+  };
+
+  const handleStatusSelect = (status: LeadStatus) => {
+    setSelectedFolder(status);
+    setCurrentView('leads');
+    setFilters(prev => ({ ...prev, status: [status], folder: [] }));
+    setSearchQuery('');
+    setAppliedSearchQuery('');
+    setCurrentPage(1);
+    navigate(`/leads?statusFilter=${encodeURIComponent(status)}`, { replace: true });
   };
 
   const handleBackToFolders = () => {
@@ -750,11 +765,7 @@ const AllLeads: React.FC = () => {
                 <div
                   key={`status-${status}`}
 	                  className="lead-category-card"
-                  onClick={() => {
-                    setSelectedFolder(status);
-                    setCurrentView('leads');
-                    setFilters(prev => ({ ...prev, status: [status], folder: [] })); // Clear folder filter
-                  }}
+                  onClick={() => handleStatusSelect(status)}
                 >
 	                  <div className="lead-category-card__content">
 	                    <div className={`lead-category-card__icon ${getStatusColor(status).replace('text-', 'bg-').split(' ')[0]}`}>

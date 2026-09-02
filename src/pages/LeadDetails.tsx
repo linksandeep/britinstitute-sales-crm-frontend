@@ -50,6 +50,7 @@ interface ReturnState {
     status?: string[];
     source?: string[];
     priority?: string[];
+    folder?: string[];
   };
 }
 
@@ -437,7 +438,9 @@ const LeadDetails: React.FC = () => {
       if (state.currentPage && state.currentPage > 1) params.set('page', state.currentPage.toString());
       if (state.leadsPerPage && state.leadsPerPage !== 10) params.set('size', state.leadsPerPage.toString());
       if (state.searchQuery) params.set('search', state.searchQuery);
-      if (state.currentView === 'leads' && state.selectedFolder) params.set('folder', state.selectedFolder);
+      if (state.currentView === 'leads' && state.selectedFolder && state.filters?.folder?.length) {
+        params.set('folder', state.selectedFolder);
+      }
       if (state.statusFilter) params.set('status', state.statusFilter);
       if (state.folderFilter) params.set('folderFilter', state.folderFilter);
       if (state.filters?.status?.length) params.set('statusFilter', state.filters.status.join(','));
