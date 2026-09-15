@@ -28,6 +28,7 @@ import type {
   ZoomPhoneNumberAssignmentRequest,
   ZoomPhoneNumberAssignmentsResponse,
   ZoomPhoneStatus,
+  ZoomTalkTimeResponse,
 
 } from '../types';
 
@@ -1074,6 +1075,14 @@ const appendZoomPhoneQuery = (params: URLSearchParams, query?: ZoomPhoneQuery) =
 };
 
 export const zoomPhoneApi = {
+  getMyTalkTime: async (timezone: string): Promise<ApiResponse<ZoomTalkTimeResponse>> => {
+    try {
+      const response = await api.get('/zoom-phone/my/talk-time', { params: { timezone } });
+      return handleResponse(response);
+    } catch (error) {
+      return handleError(error);
+    }
+  },
   getStatus: async (): Promise<ApiResponse<ZoomPhoneStatus>> => {
     try {
       const response = await api.get('/zoom-phone/status');

@@ -24,6 +24,7 @@ import {
   YAxis
 } from 'recharts';
 import { useAuth } from '../contexts/AuthContext';
+import ZoomTalkTime from '../components/ZoomTalkTime';
 import { dashboardApi, leadApi } from '../lib/api';
 import type { DashboardStats, Lead, PeriodLeadStats } from '../types';
 import { buildCallCenterSnapshot, formatDuration } from '../lib/callCenterData';
@@ -345,6 +346,8 @@ const Dashboard: React.FC = () => {
           </Link>
         </div>
       </div>
+
+      <ZoomTalkTime />
 
       <div className="metric-grid">
         {periodMetrics.map((metric) => {

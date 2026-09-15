@@ -1,4 +1,11 @@
 // Authentication Types
+export interface ZoomTalkTimeResponse {
+  linked: boolean;
+  timezone: string;
+  updated_at: string;
+  daily: { date: string; talk_time_seconds: number; connected_calls: number };
+  weekly: { from: string; to: string; talk_time_seconds: number; connected_calls: number };
+}
 
 export interface AssignmentHistoryItem {
   _id: string;
