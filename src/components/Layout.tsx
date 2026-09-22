@@ -29,7 +29,12 @@ interface ReminderPayload {
   remindAt?: string;
   reminderAt?: string;
   createdAt?: string;
-  lead?: Reminder['lead'];
+  lead?: {
+    _id?: string;
+    id?: string;
+    name?: string;
+    email?: string;
+  };
 }
 
 interface LayoutProps {
@@ -43,6 +48,12 @@ const normalizeReminder = (reminder: ReminderPayload): Reminder => ({
   reminderAt: reminder.remindAt || reminder.reminderAt,
   createdAt: reminder.createdAt,
   lead: reminder.lead
+    ? {
+        _id: reminder.lead._id || reminder.lead.id || '',
+        name: reminder.lead.name || 'Lead',
+        email: reminder.lead.email || ''
+      }
+    : undefined
 });
 
 const Layout: React.FC<LayoutProps> = ({ children }) => {
@@ -71,6 +82,11 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
 
   useEffect(() => {
     fetchReminders();
+  }, [fetchReminders]);
+
+  useEffect(() => {
+    window.addEventListener('reminders:refresh', fetchReminders);
+    return () => window.removeEventListener('reminders:refresh', fetchReminders);
   }, [fetchReminders]);
 
   useEffect(() => {

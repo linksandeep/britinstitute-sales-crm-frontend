@@ -63,7 +63,7 @@ export default function ZoomTalkTime() {
       <div className="card-header">
         <div>
           <h2 className="card-title">Your Zoom Talk Time</h2>
-          <p className="card-subtitle">Completed phone calls · This week starts Sunday</p>
+          <p className="card-subtitle">Phone activity · This week starts Sunday</p>
         </div>
         <button type="button" className="btn btn-secondary btn-sm" onClick={refresh} disabled={loading} aria-label="Refresh your Zoom talk time">
           <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
@@ -81,16 +81,20 @@ export default function ZoomTalkTime() {
         ) : (
           <div className="grid gap-4 sm:grid-cols-2">
             {[
-              { label: 'Today', seconds: data?.daily.talk_time_seconds, count: data?.daily.connected_calls, icon: PhoneCall },
-              { label: 'This week', seconds: data?.weekly.talk_time_seconds, count: data?.weekly.connected_calls, icon: Clock }
-            ].map(({ label, seconds, count, icon: Icon }) => (
+              { label: 'Today', seconds: data?.daily.talk_time_seconds, connected: data?.daily.connected_calls, dialed: data?.daily.dialed_calls, icon: PhoneCall },
+              { label: 'This week', seconds: data?.weekly.talk_time_seconds, connected: data?.weekly.connected_calls, dialed: data?.weekly.dialed_calls, icon: Clock }
+            ].map(({ label, seconds, connected, dialed, icon: Icon }) => (
               <div key={label} className="metric-card metric-card--blue">
                 <div className="metric-card__top">
                   <p className="metric-card__label">{label}</p>
                   <Icon className="h-5 w-5" />
                 </div>
                 <p className="metric-card__value">{seconds === undefined ? 'Loading…' : formatTalkTime(seconds)}</p>
-                <p className="metric-card__change">{count === undefined ? 'Retrieving Zoom calls' : `${count} connected ${count === 1 ? 'call' : 'calls'}`}</p>
+                <p className="metric-card__change">
+                  {connected === undefined || dialed === undefined
+                    ? 'Retrieving Zoom calls'
+                    : `${connected} connected ${connected === 1 ? 'call' : 'calls'} · ${dialed} dialed ${dialed === 1 ? 'call' : 'calls'}`}
+                </p>
               </div>
             ))}
           </div>

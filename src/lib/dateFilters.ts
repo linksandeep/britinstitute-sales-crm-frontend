@@ -55,6 +55,38 @@ export const toLeadDateFilterParams = (range: DateFilterState, dateField: DateFi
   };
 };
 
+export const toLeadCreatedAndModifiedDateParams = (
+  createdRange: DateFilterState,
+  modifiedRange: DateFilterState
+) => {
+  const hasCreatedRange = isDateFilterActive(createdRange);
+  const hasModifiedRange = isDateFilterActive(modifiedRange);
+  if (!hasCreatedRange && !hasModifiedRange) return {};
+
+  return {
+    createdFromDate: createdRange.fromDate || undefined,
+    createdToDate: createdRange.toDate || undefined,
+    modifiedFromDate: modifiedRange.fromDate || undefined,
+    modifiedToDate: modifiedRange.toDate || undefined,
+    timezoneOffsetMinutes: getTimezoneOffsetParam()
+  };
+};
+
+export const getLeadDateFilterSummary = (
+  createdRange: DateFilterState,
+  modifiedRange: DateFilterState
+) => {
+  const descriptions: string[] = [];
+  if (isDateFilterActive(createdRange)) {
+    descriptions.push(`created ${createdRange.fromDate || 'from start'} to ${createdRange.toDate || 'today'}`);
+  }
+  if (isDateFilterActive(modifiedRange)) {
+    descriptions.push(`modified ${modifiedRange.fromDate || 'from start'} to ${modifiedRange.toDate || 'today'}`);
+  }
+
+  return descriptions.length ? `Showing leads ${descriptions.join(' and ')}` : 'Showing leads from all dates';
+};
+
 export const isLeadInDateRange = (lead: Lead, range: DateFilterState, dateField: DateField = 'createdAt') => {
   if (!isDateFilterActive(range)) return true;
 

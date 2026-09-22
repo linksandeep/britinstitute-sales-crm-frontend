@@ -4,7 +4,9 @@ import { leadApi, statusApi } from '../lib/api';
 import type { Lead, LeadStatus } from '../types';
 import LeadWhatsAppButton from '../components/LeadWhatsAppButton';
 import QuickLeadSearch from '../components/QuickLeadSearch';
-import { toLeadDateFilterParams, type DateFilterState } from '../lib/dateFilters';
+import StatusReminderDialog from '../components/StatusReminderDialog';
+import { getLeadDateFilterSummary, toLeadCreatedAndModifiedDateParams, type DateFilterState } from '../lib/dateFilters';
+import { statusNeedsReminder, type StatusReminderSchedule } from '../lib/statusReminder';
 import { 
   Phone,
   Mail,
@@ -46,9 +48,16 @@ const MyLeads: React.FC = () => {
   const [updatingStatus, setUpdatingStatus] = useState(false);
   const [showAssignmentModal, setShowAssignmentModal] = useState(false);
   const [selectedAssignmentLead, setSelectedAssignmentLead] = useState<any>(null);
-  const [dateRange, setDateRange] = useState<DateFilterState>({ fromDate: '', toDate: '' });
+  const [createdDateRange, setCreatedDateRange] = useState<DateFilterState>({ fromDate: '', toDate: '' });
+  const [modifiedDateRange, setModifiedDateRange] = useState<DateFilterState>({ fromDate: '', toDate: '' });
+  const [pendingStatusChange, setPendingStatusChange] = useState<
+    | { kind: 'single'; leadId: string; leadName: string; status: LeadStatus }
+    | { kind: 'bulk'; status: LeadStatus }
+    | null
+  >(null);
+  const [statusReminderSubmitting, setStatusReminderSubmitting] = useState(false);
 
-  const getDateFilters = () => toLeadDateFilterParams(dateRange, 'createdAt');
+  const getDateFilters = () => toLeadCreatedAndModifiedDateParams(createdDateRange, modifiedDateRange);
 
   // Initialize state from URL parameters on component mount
   useEffect(() => {
@@ -92,7 +101,7 @@ const MyLeads: React.FC = () => {
       fetchMyLeads();
       fetchAllStats();
     }
-  }, [currentPage, statusFilter, folderFilter, currentView, leadsPerPage, appliedSearchQuery, dateRange]);
+  }, [currentPage, statusFilter, folderFilter, currentView, leadsPerPage, appliedSearchQuery, createdDateRange, modifiedDateRange]);
 
   const fetchFolders = async () => {
     try {
@@ -189,20 +198,36 @@ const MyLeads: React.FC = () => {
     }
   };
 
-  const updateLeadStatus = async (leadId: string, newStatus: LeadStatus) => {
+  const applyLeadStatusUpdate = async (
+    leadId: string,
+    newStatus: LeadStatus,
+    statusReminder?: StatusReminderSchedule
+  ) => {
     try {
-      const response = await leadApi.updateLead(leadId, { status: newStatus });
+      const response = await leadApi.updateLead(leadId, { status: newStatus, statusReminder });
       if (response.success) {
         setLeads(prev => prev.map(lead => 
           lead._id === leadId ? { ...lead, status: newStatus } : lead
         ));
-        toast.success('Lead status updated successfully');
+        toast.success(statusReminder ? 'Lead status updated and reminder scheduled' : 'Lead status updated successfully');
+        return true;
       } else {
         toast.error(response.message || 'Failed to update lead status');
       }
     } catch (error) {
       toast.error('Failed to update lead status');
     }
+    return false;
+  };
+
+  const updateLeadStatus = async (leadId: string, newStatus: LeadStatus) => {
+    const selectedLead = leads.find((lead) => lead._id === leadId);
+    if (!selectedLead || selectedLead.status === newStatus) return;
+    if (statusNeedsReminder(newStatus)) {
+      setPendingStatusChange({ kind: 'single', leadId, leadName: selectedLead.name, status: newStatus });
+      return;
+    }
+    await applyLeadStatusUpdate(leadId, newStatus);
   };
 
   const handleSelectLead = (leadId: string) => {
@@ -221,35 +246,63 @@ const MyLeads: React.FC = () => {
     );
   };
 
-  const handleBulkStatusUpdate = async () => {
+  const handleBulkStatusUpdate = async (statusReminder?: StatusReminderSchedule) => {
     if (selectedLeads.length === 0) {
       toast.error('Please select leads to update');
-      return;
+      return false;
     }
 
     if (!bulkStatus) {
       toast.error('Please select a status');
-      return;
+      return false;
+    }
+
+    if (statusNeedsReminder(bulkStatus) && !statusReminder) {
+      setPendingStatusChange({ kind: 'bulk', status: bulkStatus });
+      return false;
     }
 
     setUpdatingStatus(true);
 
     try {
-      const response = await leadApi.bulkUpdateStatus(selectedLeads, bulkStatus);
+      const response = await leadApi.bulkUpdateStatus(selectedLeads, bulkStatus, statusReminder);
 
       if (response.success) {
-        toast.success(`Successfully updated ${selectedLeads.length} lead${selectedLeads.length !== 1 ? 's' : ''} to "${bulkStatus}"`);
+        toast.success(`Successfully updated ${selectedLeads.length} lead${selectedLeads.length !== 1 ? 's' : ''} to "${bulkStatus}"${statusReminder ? ' and scheduled reminders' : ''}`);
         setSelectedLeads([]);
         setBulkStatus('');
         fetchMyLeads(); // Refresh the leads list
+        return true;
       } else {
         toast.error(response.message || 'Failed to update lead statuses');
+        return false;
       }
     } catch (error) {
       toast.error('Failed to update lead statuses');
+      return false;
     } finally {
       setUpdatingStatus(false);
     }
+  };
+
+  const confirmStatusReminder = async (schedule: StatusReminderSchedule) => {
+    if (!pendingStatusChange) return;
+    setStatusReminderSubmitting(true);
+    const pending = pendingStatusChange;
+    if (pending.kind === 'single') {
+      const updated = await applyLeadStatusUpdate(pending.leadId, pending.status, schedule);
+      if (updated) {
+        setPendingStatusChange(null);
+        window.dispatchEvent(new Event('reminders:refresh'));
+      }
+    } else {
+      const updated = await handleBulkStatusUpdate(schedule);
+      if (updated) {
+        setPendingStatusChange(null);
+        window.dispatchEvent(new Event('reminders:refresh'));
+      }
+    }
+    setStatusReminderSubmitting(false);
   };
 
   const getStatusColor = (status: LeadStatus): string => {
@@ -357,14 +410,15 @@ const MyLeads: React.FC = () => {
 
       <div className="card">
         <div className="card-body">
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-[1fr_1fr_auto_auto] md:items-end">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-[1fr_1fr_1fr_1fr_auto] xl:items-end">
             <div>
               <label className="form-label">Created From</label>
               <input
                 type="date"
-                value={dateRange.fromDate}
+                value={createdDateRange.fromDate}
+                max={createdDateRange.toDate || undefined}
                 onChange={(event) => {
-                  setDateRange((current) => ({ ...current, fromDate: event.target.value }));
+                  setCreatedDateRange((current) => ({ ...current, fromDate: event.target.value }));
                   setCurrentPage(1);
                   setSelectedLeads([]);
                 }}
@@ -375,9 +429,38 @@ const MyLeads: React.FC = () => {
               <label className="form-label">Created To</label>
               <input
                 type="date"
-                value={dateRange.toDate}
+                value={createdDateRange.toDate}
+                min={createdDateRange.fromDate || undefined}
                 onChange={(event) => {
-                  setDateRange((current) => ({ ...current, toDate: event.target.value }));
+                  setCreatedDateRange((current) => ({ ...current, toDate: event.target.value }));
+                  setCurrentPage(1);
+                  setSelectedLeads([]);
+                }}
+                className="form-input"
+              />
+            </div>
+            <div>
+              <label className="form-label">Modified From</label>
+              <input
+                type="date"
+                value={modifiedDateRange.fromDate}
+                max={modifiedDateRange.toDate || undefined}
+                onChange={(event) => {
+                  setModifiedDateRange((current) => ({ ...current, fromDate: event.target.value }));
+                  setCurrentPage(1);
+                  setSelectedLeads([]);
+                }}
+                className="form-input"
+              />
+            </div>
+            <div>
+              <label className="form-label">Modified To</label>
+              <input
+                type="date"
+                value={modifiedDateRange.toDate}
+                min={modifiedDateRange.fromDate || undefined}
+                onChange={(event) => {
+                  setModifiedDateRange((current) => ({ ...current, toDate: event.target.value }));
                   setCurrentPage(1);
                   setSelectedLeads([]);
                 }}
@@ -387,7 +470,8 @@ const MyLeads: React.FC = () => {
             <button
               type="button"
               onClick={() => {
-                setDateRange({ fromDate: '', toDate: '' });
+                setCreatedDateRange({ fromDate: '', toDate: '' });
+                setModifiedDateRange({ fromDate: '', toDate: '' });
                 setCurrentPage(1);
                 setSelectedLeads([]);
               }}
@@ -395,10 +479,8 @@ const MyLeads: React.FC = () => {
             >
               Clear Dates
             </button>
-            <div className="text-sm text-gray-500">
-              {dateRange.fromDate || dateRange.toDate
-                ? `Showing leads created ${dateRange.fromDate || 'from start'} to ${dateRange.toDate || 'today'}`
-                : 'Showing leads from all dates'}
+            <div className="text-sm text-gray-500 md:col-span-2 xl:col-span-5">
+              {getLeadDateFilterSummary(createdDateRange, modifiedDateRange)}
             </div>
           </div>
         </div>
@@ -498,7 +580,8 @@ const MyLeads: React.FC = () => {
                 onClick={() => {
                   setSearchQuery('');
                   setAppliedSearchQuery('');
-                  setDateRange({ fromDate: '', toDate: '' });
+                  setCreatedDateRange({ fromDate: '', toDate: '' });
+                  setModifiedDateRange({ fromDate: '', toDate: '' });
                   setCurrentPage(1);
                   // Don't clear folder/status filter - it stays locked
                 }}
@@ -627,7 +710,7 @@ const MyLeads: React.FC = () => {
                 </select>
               </div>
               <button
-                onClick={handleBulkStatusUpdate}
+                onClick={() => void handleBulkStatusUpdate()}
                 disabled={selectedLeads.length === 0 || !bulkStatus || updatingStatus}
                 className="btn btn-success"
               >
@@ -969,6 +1052,17 @@ const MyLeads: React.FC = () => {
     </div>
   </div>
 )}
+
+      {pendingStatusChange && (
+        <StatusReminderDialog
+          status={pendingStatusChange.status}
+          leadName={pendingStatusChange.kind === 'single' ? pendingStatusChange.leadName : undefined}
+          leadCount={pendingStatusChange.kind === 'bulk' ? selectedLeads.length : 1}
+          submitting={statusReminderSubmitting}
+          onCancel={() => setPendingStatusChange(null)}
+          onConfirm={confirmStatusReminder}
+        />
+      )}
 
     </div>
   );

@@ -13,6 +13,8 @@ import type {
   ZoomPhoneStatus
 } from '../types';
 import LeadWhatsAppButton from '../components/LeadWhatsAppButton';
+import StatusReminderDialog from '../components/StatusReminderDialog';
+import { statusNeedsReminder, type StatusReminderSchedule } from '../lib/statusReminder';
 import {
   AlertCircle,
   ArrowLeft,
@@ -183,6 +185,7 @@ const LeadDetails: React.FC = () => {
   const [audioLoadProgress, setAudioLoadProgress] = useState(0);
   const [audioLoadStatus, setAudioLoadStatus] = useState('');
   const [statusOptions, setStatusOptions] = useState<LeadStatus[]>(defaultStatusOptions);
+  const [pendingStatusReminder, setPendingStatusReminder] = useState<LeadStatus | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const recordingPlayerRef = useRef<HTMLDivElement | null>(null);
 
@@ -488,9 +491,15 @@ const LeadDetails: React.FC = () => {
 
   const handlePipelineUpdate = async <Field extends 'status' | 'priority',>(
     field: Field,
-    value: Lead[Field]
+    value: Lead[Field],
+    statusReminder?: StatusReminderSchedule
   ) => {
-    if (!id || !lead || !canEdit || pipelineSavingField || lead[field] === value) return;
+    if (!id || !lead || !canEdit || pipelineSavingField || lead[field] === value) return false;
+
+    if (field === 'status' && statusNeedsReminder(value as LeadStatus) && !statusReminder) {
+      setPendingStatusReminder(value as LeadStatus);
+      return false;
+    }
 
     const previousValue = lead[field];
     setPipelineSavingField(field);
@@ -498,7 +507,7 @@ const LeadDetails: React.FC = () => {
     setFormData((current) => ({ ...current, [field]: value }));
 
     const updateData = field === 'status'
-      ? { status: value as LeadStatus }
+      ? { status: value as LeadStatus, statusReminder }
       : { priority: value as LeadPriority };
     const response = await leadApi.updateLead(id, updateData);
 
@@ -507,13 +516,25 @@ const LeadDetails: React.FC = () => {
       setLead(response.data);
       setFormData((current) => ({ ...current, [field]: savedValue }));
       toast.success(`${field === 'status' ? 'Status' : 'Priority'} updated`);
+      setPipelineSavingField(null);
+      return true;
     } else {
       setLead((current) => current ? ({ ...current, [field]: previousValue } as Lead) : current);
       setFormData((current) => ({ ...current, [field]: previousValue }));
       toast.error(response.message || `Failed to update lead ${field}`);
+      setPipelineSavingField(null);
+      return false;
     }
+  };
 
-    setPipelineSavingField(null);
+  const confirmStatusReminder = async (schedule: StatusReminderSchedule) => {
+    if (!pendingStatusReminder) return;
+
+    const updated = await handlePipelineUpdate('status', pendingStatusReminder, schedule);
+    if (updated) {
+      setPendingStatusReminder(null);
+      window.dispatchEvent(new Event('reminders:refresh'));
+    }
   };
 
   const handleAssignLead = async () => {
@@ -1433,6 +1454,16 @@ const LeadDetails: React.FC = () => {
           )}
         </aside>
       </div>
+
+      {pendingStatusReminder && (
+        <StatusReminderDialog
+          status={pendingStatusReminder}
+          leadName={lead.name}
+          submitting={pipelineSavingField === 'status'}
+          onCancel={() => setPendingStatusReminder(null)}
+          onConfirm={confirmStatusReminder}
+        />
+      )}
 
       {showReminderForm && (
         <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/45 p-4">

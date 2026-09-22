@@ -3,8 +3,8 @@ export interface ZoomTalkTimeResponse {
   linked: boolean;
   timezone: string;
   updated_at: string;
-  daily: { date: string; talk_time_seconds: number; connected_calls: number };
-  weekly: { from: string; to: string; talk_time_seconds: number; connected_calls: number };
+  daily: { date: string; talk_time_seconds: number; connected_calls: number; dialed_calls: number };
+  weekly: { from: string; to: string; talk_time_seconds: number; connected_calls: number; dialed_calls: number };
 }
 
 export interface AssignmentHistoryItem {
@@ -253,6 +253,11 @@ export interface UpdateLeadForm {
   folder?: string;
   source?: LeadSource;
   status?: LeadStatus;
+  statusReminder?: {
+    date: string;
+    time: string;
+    timeZone: 'Europe/London' | 'Asia/Kolkata';
+  };
   priority?: LeadPriority;
 }
 
@@ -722,6 +727,10 @@ export interface LeadFilters {
   date?: string;
   fromDate?: string;
   toDate?: string;
+  createdFromDate?: string;
+  createdToDate?: string;
+  modifiedFromDate?: string;
+  modifiedToDate?: string;
   dateField?: 'createdAt' | 'updatedAt';
   timezoneOffsetMinutes?: string;
   dateRange?: {

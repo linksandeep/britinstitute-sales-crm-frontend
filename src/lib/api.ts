@@ -149,6 +149,10 @@ const appendLeadDateParams = (params: URLSearchParams, filters?: Partial<LeadFil
   if (filters.date) params.append('date', filters.date);
   if (filters.fromDate) params.append('fromDate', filters.fromDate);
   if (filters.toDate) params.append('toDate', filters.toDate);
+  if (filters.createdFromDate) params.append('createdFromDate', filters.createdFromDate);
+  if (filters.createdToDate) params.append('createdToDate', filters.createdToDate);
+  if (filters.modifiedFromDate) params.append('modifiedFromDate', filters.modifiedFromDate);
+  if (filters.modifiedToDate) params.append('modifiedToDate', filters.modifiedToDate);
   if (filters.dateField) params.append('dateField', filters.dateField);
   if (filters.timezoneOffsetMinutes) params.append('timezoneOffsetMinutes', filters.timezoneOffsetMinutes);
 };
@@ -491,9 +495,13 @@ getAllChats: async (
     }
   },
 
-  bulkUpdateStatus: async (leadIds: string[], status: string): Promise<ApiResponse<Lead[]>> => {
+  bulkUpdateStatus: async (
+    leadIds: string[],
+    status: string,
+    statusReminder?: UpdateLeadForm['statusReminder']
+  ): Promise<ApiResponse<Lead[]>> => {
     try {
-      const response = await api.put('/leads/bulk-status', { leadIds, status });
+      const response = await api.put('/leads/bulk-status', { leadIds, status, statusReminder });
       return handleResponse(response);
     } catch (error) {
       return handleError(error);

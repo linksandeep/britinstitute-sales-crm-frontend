@@ -1,4 +1,5 @@
 import React from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Clock, X, Bell, AlertTriangle } from 'lucide-react';
 
 interface ReminderNotificationProps {
@@ -7,7 +8,7 @@ interface ReminderNotificationProps {
     title: string;
     note?: string;
     reminderAt?: string;
-    lead?: { name: string };
+    lead?: { _id: string; name: string };
   };
   onClose: () => void;
   onMarkDone: (id: string) => void;
@@ -18,6 +19,13 @@ const ReminderNotification: React.FC<ReminderNotificationProps> = ({
   onClose,
   onMarkDone
 }) => {
+  const navigate = useNavigate();
+  const openLead = () => {
+    if (!reminder.lead?._id) return;
+    onClose();
+    navigate(`/leads/${reminder.lead._id}`);
+  };
+
   return (
     <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 p-4">
       <div className="w-full max-w-md bg-red-50 border border-red-200 rounded-xl shadow-2xl animate-fade-in">
@@ -55,10 +63,15 @@ const ReminderNotification: React.FC<ReminderNotificationProps> = ({
 
             <div className="space-y-3 mt-4">
               {reminder.lead?.name && (
-                <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={openLead}
+                  className="flex items-center gap-2 rounded-md px-1 py-1 text-left transition hover:bg-red-100"
+                  title="Open lead details"
+                >
                   <span className="text-sm font-medium text-gray-600 min-w-16">Lead:</span>
-                  <span className="text-gray-800">{reminder.lead.name}</span>
-                </div>
+                  <span className="text-gray-800 underline decoration-red-300 underline-offset-2">{reminder.lead.name}</span>
+                </button>
               )}
 
               {reminder.reminderAt && (
