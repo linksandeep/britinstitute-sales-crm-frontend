@@ -15,6 +15,7 @@ import type {
 import LeadWhatsAppButton from '../components/LeadWhatsAppButton';
 import StatusReminderDialog from '../components/StatusReminderDialog';
 import { statusNeedsReminder, type StatusReminderSchedule } from '../lib/statusReminder';
+import type { DateFilterState } from '../lib/dateFilters';
 import {
   AlertCircle,
   ArrowLeft,
@@ -39,8 +40,9 @@ import { reminderApi } from '../lib/reminderApi';
 
 type LeadDetailTab = 'activity' | 'calls' | 'tasks';
 
-interface ReturnState {
+export interface ReturnState {
   returnTo?: string;
+  returnSearch?: string;
   currentPage?: number;
   leadsPerPage?: number;
   searchQuery?: string;
@@ -53,7 +55,14 @@ interface ReturnState {
     source?: string[];
     priority?: string[];
     folder?: string[];
+    assignedTo?: string[];
   };
+  createdDateRange?: DateFilterState;
+  modifiedDateRange?: DateFilterState;
+  createdFromDate?: string;
+  createdToDate?: string;
+  modifiedFromDate?: string;
+  modifiedToDate?: string;
 }
 
 const defaultStatusOptions: LeadStatus[] = [
@@ -450,7 +459,10 @@ const LeadDetails: React.FC = () => {
     const state = location.state as ReturnState | null;
 
     if (state?.returnTo) {
-      const params = new URLSearchParams();
+      const baseSearch = state.returnSearch
+        ? (state.returnSearch.startsWith('?') ? state.returnSearch.slice(1) : state.returnSearch)
+        : '';
+      const params = new URLSearchParams(baseSearch);
 
       if (state.currentPage && state.currentPage > 1) params.set('page', state.currentPage.toString());
       if (state.leadsPerPage && state.leadsPerPage !== 10) params.set('size', state.leadsPerPage.toString());
@@ -458,14 +470,28 @@ const LeadDetails: React.FC = () => {
       if (state.currentView === 'leads' && state.selectedFolder && state.filters?.folder?.length) {
         params.set('folder', state.selectedFolder);
       }
-      if (state.statusFilter) params.set('status', state.statusFilter);
+      if (state.statusFilter) params.set('statusFilter', state.statusFilter);
       if (state.folderFilter) params.set('folderFilter', state.folderFilter);
       if (state.filters?.status?.length) params.set('statusFilter', state.filters.status.join(','));
       if (state.filters?.source?.length) params.set('sourceFilter', state.filters.source.join(','));
       if (state.filters?.priority?.length) params.set('priorityFilter', state.filters.priority.join(','));
+      if (state.filters?.assignedTo?.length) params.set('assignedTo', state.filters.assignedTo.join(','));
+
+      const createdFrom = state.createdDateRange?.fromDate || state.createdFromDate;
+      const createdTo = state.createdDateRange?.toDate || state.createdToDate;
+      const modifiedFrom = state.modifiedDateRange?.fromDate || state.modifiedFromDate;
+      const modifiedTo = state.modifiedDateRange?.toDate || state.modifiedToDate;
+
+      if (createdFrom) params.set('createdFromDate', createdFrom);
+      if (createdTo) params.set('createdToDate', createdTo);
+      if (modifiedFrom) params.set('modifiedFromDate', modifiedFrom);
+      if (modifiedTo) params.set('modifiedToDate', modifiedTo);
 
       const queryString = params.toString();
-      navigate(queryString ? `${state.returnTo}?${queryString}` : state.returnTo, { replace: true });
+      navigate(queryString ? `${state.returnTo}?${queryString}` : state.returnTo, {
+        replace: true,
+        state
+      });
       return;
     }
 

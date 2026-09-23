@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { leadApi, userApi, statusApi } from '../lib/api';
 import type { Lead, LeadStatus, LeadSource, LeadPriority, LeadFilters, User } from '../types';
+import type { ReturnState } from './LeadDetails';
 import LeadWhatsAppButton from '../components/LeadWhatsAppButton';
 import QuickLeadSearch from '../components/QuickLeadSearch';
 import StatusReminderDialog from '../components/StatusReminderDialog';
@@ -30,14 +31,60 @@ import toast from 'react-hot-toast';
 const AllLeads: React.FC = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const [searchParams] = useSearchParams();
-  const initialPage = Number.parseInt(searchParams.get('page') || '', 10);
-  const initialPageSize = Number.parseInt(searchParams.get('size') || '', 10);
-  const initialSearch = searchParams.get('search') || '';
-  const initialFolder = searchParams.get('folder');
-  const initialStatuses = (searchParams.get('statusFilter') || '').split(',').filter(Boolean) as LeadStatus[];
-  const initialSources = (searchParams.get('sourceFilter') || '').split(',').filter(Boolean) as LeadSource[];
-  const initialPriorities = (searchParams.get('priorityFilter') || '').split(',').filter(Boolean) as LeadPriority[];
+  const returnState = location.state as ReturnState | null;
+
+  const initialPage = Number.parseInt(searchParams.get('page') || '', 10) || returnState?.currentPage || 1;
+  const initialPageSize = Number.parseInt(searchParams.get('size') || '', 10) || returnState?.leadsPerPage || 10;
+  const initialSearch = searchParams.get('search') || returnState?.searchQuery || '';
+  const initialFolder = searchParams.get('folder') || searchParams.get('folderFilter') || returnState?.selectedFolder || returnState?.filters?.folder?.[0] || null;
+
+  const rawStatus = searchParams.get('statusFilter') || searchParams.get('status');
+  const initialStatuses = rawStatus
+    ? (rawStatus.split(',').filter(Boolean) as LeadStatus[])
+    : (returnState?.filters?.status as LeadStatus[]) || (returnState?.statusFilter ? [returnState.statusFilter as LeadStatus] : []);
+
+  const rawSources = searchParams.get('sourceFilter');
+  const initialSources = rawSources
+    ? (rawSources.split(',').filter(Boolean) as LeadSource[])
+    : (returnState?.filters?.source as LeadSource[]) || [];
+
+  const rawPriorities = searchParams.get('priorityFilter');
+  const initialPriorities = rawPriorities
+    ? (rawPriorities.split(',').filter(Boolean) as LeadPriority[])
+    : (returnState?.filters?.priority as LeadPriority[]) || [];
+
+  const rawAssigned = searchParams.get('assignedTo');
+  const initialAssigned = rawAssigned
+    ? rawAssigned.split(',').filter(Boolean)
+    : returnState?.filters?.assignedTo || [];
+
+  const initialCreatedFrom =
+    searchParams.get('createdFromDate') ||
+    searchParams.get('createdFrom') ||
+    returnState?.createdDateRange?.fromDate ||
+    returnState?.createdFromDate ||
+    '';
+  const initialCreatedTo =
+    searchParams.get('createdToDate') ||
+    searchParams.get('createdTo') ||
+    returnState?.createdDateRange?.toDate ||
+    returnState?.createdToDate ||
+    '';
+  const initialModifiedFrom =
+    searchParams.get('modifiedFromDate') ||
+    searchParams.get('modifiedFrom') ||
+    returnState?.modifiedDateRange?.fromDate ||
+    returnState?.modifiedFromDate ||
+    '';
+  const initialModifiedTo =
+    searchParams.get('modifiedToDate') ||
+    searchParams.get('modifiedTo') ||
+    returnState?.modifiedDateRange?.toDate ||
+    returnState?.modifiedToDate ||
+    '';
+
   const [leads, setLeads] = useState<Lead[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState(initialSearch);
@@ -49,10 +96,14 @@ const AllLeads: React.FC = () => {
   const [showFilters, setShowFilters] = useState(false);
   const [deleteLead, setDeleteLead] = useState<Lead | null>(null);
   const [availableFolders, setAvailableFolders] = useState<string[]>([]);
-  const [currentView, setCurrentView] = useState<'folders' | 'leads'>(
-    initialFolder || initialStatuses.length ? 'leads' : 'folders'
-  );
-  const [selectedFolder, setSelectedFolder] = useState<string | null>(initialFolder || initialStatuses[0] || null);
+  const [currentView, setCurrentView] = useState<'folders' | 'leads'>(() => {
+    if (returnState?.currentView) return returnState.currentView as 'folders' | 'leads';
+    if (initialFolder || initialStatuses.length > 0 || searchParams.get('view') === 'leads') return 'leads';
+    return 'folders';
+  });
+  const [selectedFolder, setSelectedFolder] = useState<string | null>(() => {
+    return initialFolder || initialStatuses[0] || returnState?.selectedFolder || null;
+  });
   const [folderStats, setFolderStats] = useState<Record<string, number>>({});
   const [statusStats, setStatusStats] = useState<Record<string, number>>({});
   const [leadsPerPage, setLeadsPerPage] = useState(
@@ -63,8 +114,14 @@ const AllLeads: React.FC = () => {
   const [bulkStatus, setBulkStatus] = useState<string>('');
   const [bulkAssignee, setBulkAssignee] = useState<string>('');
   const [updatingStatus, setUpdatingStatus] = useState(false);
-  const [createdDateRange, setCreatedDateRange] = useState<DateFilterState>({ fromDate: '', toDate: '' });
-  const [modifiedDateRange, setModifiedDateRange] = useState<DateFilterState>({ fromDate: '', toDate: '' });
+  const [createdDateRange, setCreatedDateRange] = useState<DateFilterState>({
+    fromDate: initialCreatedFrom,
+    toDate: initialCreatedTo
+  });
+  const [modifiedDateRange, setModifiedDateRange] = useState<DateFilterState>({
+    fromDate: initialModifiedFrom,
+    toDate: initialModifiedTo
+  });
   const [pendingBulkReminderStatus, setPendingBulkReminderStatus] = useState<LeadStatus | null>(null);
 
   // Filter states
@@ -72,8 +129,8 @@ const AllLeads: React.FC = () => {
     status: initialStatuses,
     source: initialSources,
     priority: initialPriorities,
-    assignedTo: [],
-    folder: initialFolder ? [initialFolder] : []
+    assignedTo: initialAssigned,
+    folder: initialFolder ? [initialFolder] : (returnState?.filters?.folder || [])
   });
 
   const sourceOptions: LeadSource[] = [
@@ -105,6 +162,149 @@ const AllLeads: React.FC = () => {
     fetchUsers();
     fetchStatuses();
   }, []);
+
+  // Keep URL query params in sync with active filter state
+  useEffect(() => {
+    const params = new URLSearchParams();
+
+    if (currentView === 'leads') {
+      if (selectedFolder) {
+        if (filters.folder?.length && !statusOptions.includes(selectedFolder)) {
+          params.set('folder', selectedFolder);
+        } else if (filters.status?.length) {
+          params.set('statusFilter', filters.status.join(','));
+        } else {
+          params.set('folder', selectedFolder);
+        }
+      } else if (filters.folder?.length) {
+        params.set('folder', filters.folder.join(','));
+      }
+      if (filters.status?.length && !params.has('statusFilter')) {
+        params.set('statusFilter', filters.status.join(','));
+      }
+      if (filters.source?.length) {
+        params.set('sourceFilter', filters.source.join(','));
+      }
+      if (filters.priority?.length) {
+        params.set('priorityFilter', filters.priority.join(','));
+      }
+      if (filters.assignedTo?.length) {
+        params.set('assignedTo', filters.assignedTo.join(','));
+      }
+      if (appliedSearchQuery) {
+        params.set('search', appliedSearchQuery);
+      }
+      if (currentPage > 1) {
+        params.set('page', currentPage.toString());
+      }
+      if (leadsPerPage !== 10) {
+        params.set('size', leadsPerPage.toString());
+      }
+    }
+
+    if (createdDateRange.fromDate) params.set('createdFromDate', createdDateRange.fromDate);
+    if (createdDateRange.toDate) params.set('createdToDate', createdDateRange.toDate);
+    if (modifiedDateRange.fromDate) params.set('modifiedFromDate', modifiedDateRange.fromDate);
+    if (modifiedDateRange.toDate) params.set('modifiedToDate', modifiedDateRange.toDate);
+
+    const newQuery = params.toString();
+    const curQuery = location.search.startsWith('?') ? location.search.slice(1) : location.search;
+
+    const newParams = new URLSearchParams(newQuery);
+    const curParams = new URLSearchParams(curQuery);
+    newParams.sort();
+    curParams.sort();
+
+    if (newParams.toString() !== curParams.toString()) {
+      navigate(newQuery ? `/leads?${newQuery}` : '/leads', { replace: true });
+    }
+  }, [
+    currentView,
+    selectedFolder,
+    currentPage,
+    leadsPerPage,
+    appliedSearchQuery,
+    filters,
+    createdDateRange,
+    modifiedDateRange,
+    statusOptions,
+    navigate,
+    location.search
+  ]);
+
+  // Synchronize component state when browser back/forward changes URL
+  useEffect(() => {
+    const currentParams = new URLSearchParams(location.search);
+
+    const paramPage = Number.parseInt(currentParams.get('page') || '', 10) || 1;
+    const paramSize = Number.parseInt(currentParams.get('size') || '', 10) || 10;
+    const paramSearch = currentParams.get('search') || '';
+    const paramFolder = currentParams.get('folder') || currentParams.get('folderFilter') || null;
+    const rawParamStatus = currentParams.get('statusFilter') || currentParams.get('status') || '';
+    const paramStatuses = rawParamStatus ? (rawParamStatus.split(',').filter(Boolean) as LeadStatus[]) : [];
+    const rawParamSource = currentParams.get('sourceFilter') || '';
+    const paramSources = rawParamSource ? (rawParamSource.split(',').filter(Boolean) as LeadSource[]) : [];
+    const rawParamPriority = currentParams.get('priorityFilter') || '';
+    const paramPriorities = rawParamPriority ? (rawParamPriority.split(',').filter(Boolean) as LeadPriority[]) : [];
+    const rawParamAssigned = currentParams.get('assignedTo') || '';
+    const paramAssigned = rawParamAssigned ? rawParamAssigned.split(',').filter(Boolean) : [];
+
+    const paramCreatedFrom = currentParams.get('createdFromDate') || currentParams.get('createdFrom') || '';
+    const paramCreatedTo = currentParams.get('createdToDate') || currentParams.get('createdTo') || '';
+    const paramModifiedFrom = currentParams.get('modifiedFromDate') || currentParams.get('modifiedFrom') || '';
+    const paramModifiedTo = currentParams.get('modifiedToDate') || currentParams.get('modifiedTo') || '';
+
+    const nextView: 'folders' | 'leads' =
+      paramFolder || paramStatuses.length > 0 || currentParams.get('view') === 'leads' ? 'leads' : 'folders';
+    const nextSelectedFolder = paramFolder || paramStatuses[0] || null;
+
+    if (paramCreatedFrom !== createdDateRange.fromDate || paramCreatedTo !== createdDateRange.toDate) {
+      setCreatedDateRange({ fromDate: paramCreatedFrom, toDate: paramCreatedTo });
+    }
+    if (paramModifiedFrom !== modifiedDateRange.fromDate || paramModifiedTo !== modifiedDateRange.toDate) {
+      setModifiedDateRange({ fromDate: paramModifiedFrom, toDate: paramModifiedTo });
+    }
+    if (paramPage !== currentPage) {
+      setCurrentPage(paramPage);
+    }
+    if (paramSize !== leadsPerPage) {
+      setLeadsPerPage(paramSize);
+    }
+    if (paramSearch !== appliedSearchQuery) {
+      setSearchQuery(paramSearch);
+      setAppliedSearchQuery(paramSearch);
+    }
+    if (nextView !== currentView) {
+      setCurrentView(nextView);
+    }
+    if (nextSelectedFolder !== selectedFolder) {
+      setSelectedFolder(nextSelectedFolder);
+    }
+    setFilters(prev => {
+      const prevStatus = prev.status || [];
+      const prevFolder = prev.folder || [];
+      const prevSource = prev.source || [];
+      const prevPriority = prev.priority || [];
+      const prevAssigned = prev.assignedTo || [];
+
+      const isStatusEqual = prevStatus.length === paramStatuses.length && prevStatus.every((s, i) => s === paramStatuses[i]);
+      const isFolderEqual = prevFolder.length === (paramFolder ? 1 : 0) && (!paramFolder || prevFolder[0] === paramFolder);
+      const isSourceEqual = prevSource.length === paramSources.length && prevSource.every((s, i) => s === paramSources[i]);
+      const isPriorityEqual = prevPriority.length === paramPriorities.length && prevPriority.every((p, i) => p === paramPriorities[i]);
+      const isAssignedEqual = prevAssigned.length === paramAssigned.length && prevAssigned.every((a, i) => a === paramAssigned[i]);
+
+      if (isStatusEqual && isFolderEqual && isSourceEqual && isPriorityEqual && isAssignedEqual) {
+        return prev;
+      }
+      return {
+        status: paramStatuses,
+        folder: paramFolder ? [paramFolder] : [],
+        source: paramSources,
+        priority: paramPriorities,
+        assignedTo: paramAssigned
+      };
+    });
+  }, [location.search]);
 
   const fetchStatuses = async () => {
     try {
@@ -229,9 +429,7 @@ const AllLeads: React.FC = () => {
     setSearchQuery('');
     setAppliedSearchQuery('');
     setCurrentPage(1);
-    // Keep the active folder in the URL so the browser Back button can
-    // reconstruct this view after visiting a lead's detail page.
-    navigate(`/leads?folder=${encodeURIComponent(folder)}`, { replace: true });
+    setSelectedLeads([]);
   };
 
   const handleStatusSelect = (status: LeadStatus) => {
@@ -241,7 +439,7 @@ const AllLeads: React.FC = () => {
     setSearchQuery('');
     setAppliedSearchQuery('');
     setCurrentPage(1);
-    navigate(`/leads?statusFilter=${encodeURIComponent(status)}`, { replace: true });
+    setSelectedLeads([]);
   };
 
   const handleBackToFolders = () => {
@@ -249,23 +447,24 @@ const AllLeads: React.FC = () => {
     setSelectedFolder(null);
     setFilters({ status: [], source: [], priority: [], assignedTo: [], folder: [] });
     setSearchQuery('');
-    setCreatedDateRange({ fromDate: '', toDate: '' });
-    setModifiedDateRange({ fromDate: '', toDate: '' });
+    setAppliedSearchQuery('');
     setCurrentPage(1);
     setSelectedLeads([]);
-    navigate('/leads', { replace: true });
   };
 
   const openLeadDetails = (leadId: string) => {
     navigate(`/leads/${leadId}`, {
       state: {
         returnTo: '/leads',
+        returnSearch: location.search,
         currentPage,
         leadsPerPage,
         filters,
-        searchQuery,
+        searchQuery: appliedSearchQuery || searchQuery,
         currentView,
-        selectedFolder
+        selectedFolder,
+        createdDateRange,
+        modifiedDateRange
       }
     });
   };

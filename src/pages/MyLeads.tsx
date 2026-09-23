@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { leadApi, statusApi } from '../lib/api';
 import type { Lead, LeadStatus } from '../types';
+import type { ReturnState } from './LeadDetails';
 import LeadWhatsAppButton from '../components/LeadWhatsAppButton';
 import QuickLeadSearch from '../components/QuickLeadSearch';
 import StatusReminderDialog from '../components/StatusReminderDialog';
@@ -25,22 +26,64 @@ import toast from 'react-hot-toast';
 
 const MyLeads: React.FC = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const [searchParams] = useSearchParams();
+  const returnState = location.state as ReturnState | null;
+
+  const initialPage = Number.parseInt(searchParams.get('page') || '', 10) || returnState?.currentPage || 1;
+  const initialPageSize = Number.parseInt(searchParams.get('size') || '', 10) || returnState?.leadsPerPage || 10;
+  const initialSearch = searchParams.get('search') || returnState?.searchQuery || '';
+  const initialFolder = searchParams.get('folder') || searchParams.get('folderFilter') || returnState?.folderFilter || returnState?.selectedFolder || '';
+  const initialStatus = (searchParams.get('status') || searchParams.get('statusFilter') || returnState?.statusFilter || returnState?.filters?.status?.[0] || '') as LeadStatus | '';
+
+  const initialCreatedFrom =
+    searchParams.get('createdFromDate') ||
+    searchParams.get('createdFrom') ||
+    returnState?.createdDateRange?.fromDate ||
+    returnState?.createdFromDate ||
+    '';
+  const initialCreatedTo =
+    searchParams.get('createdToDate') ||
+    searchParams.get('createdTo') ||
+    returnState?.createdDateRange?.toDate ||
+    returnState?.createdToDate ||
+    '';
+  const initialModifiedFrom =
+    searchParams.get('modifiedFromDate') ||
+    searchParams.get('modifiedFrom') ||
+    returnState?.modifiedDateRange?.fromDate ||
+    returnState?.modifiedFromDate ||
+    '';
+  const initialModifiedTo =
+    searchParams.get('modifiedToDate') ||
+    searchParams.get('modifiedTo') ||
+    returnState?.modifiedDateRange?.toDate ||
+    returnState?.modifiedToDate ||
+    '';
+
   const [leads, setLeads] = useState<Lead[]>([]);
   const [loading, setLoading] = useState(true);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [appliedSearchQuery, setAppliedSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState<LeadStatus | ''>('');
-  const [folderFilter, setFolderFilter] = useState('');
+  const [searchQuery, setSearchQuery] = useState(initialSearch);
+  const [appliedSearchQuery, setAppliedSearchQuery] = useState(initialSearch);
+  const [statusFilter, setStatusFilter] = useState<LeadStatus | ''>(initialStatus);
+  const [folderFilter, setFolderFilter] = useState(initialFolder);
   const [availableFolders, setAvailableFolders] = useState<string[]>([]);
-  const [currentView, setCurrentView] = useState<'folders' | 'leads'>('folders');
-  const [selectedFolder, setSelectedFolder] = useState<string | null>(null);
+  const [currentView, setCurrentView] = useState<'folders' | 'leads'>(() => {
+    if (returnState?.currentView) return returnState.currentView as 'folders' | 'leads';
+    if (initialFolder || initialStatus || searchParams.get('view') === 'leads') return 'leads';
+    return 'folders';
+  });
+  const [selectedFolder, setSelectedFolder] = useState<string | null>(() => {
+    return initialFolder || initialStatus || returnState?.selectedFolder || null;
+  });
   const [folderStats, setFolderStats] = useState<Record<string, number>>({});
   const [statusStats, setStatusStats] = useState<Record<string, number>>({});
-  const [currentPage, setCurrentPage] = useState(1);
+  const [currentPage, setCurrentPage] = useState(Number.isFinite(initialPage) && initialPage > 1 ? initialPage : 1);
   const [totalPages, setTotalPages] = useState(1);
   const [totalLeads, setTotalLeads] = useState(0);
-  const [leadsPerPage, setLeadsPerPage] = useState(10);
+  const [leadsPerPage, setLeadsPerPage] = useState(
+    [10, 25, 50, 100].includes(initialPageSize) ? initialPageSize : 10
+  );
   const [allStats, setAllStats] = useState<{ total: number; newLeads: number; inProgress: number; closed: number }>({ total: 0, newLeads: 0, inProgress: 0, closed: 0 });
   const [statusOptions, setStatusOptions] = useState<string[]>([]);
   const [selectedLeads, setSelectedLeads] = useState<string[]>([]);
@@ -48,8 +91,14 @@ const MyLeads: React.FC = () => {
   const [updatingStatus, setUpdatingStatus] = useState(false);
   const [showAssignmentModal, setShowAssignmentModal] = useState(false);
   const [selectedAssignmentLead, setSelectedAssignmentLead] = useState<any>(null);
-  const [createdDateRange, setCreatedDateRange] = useState<DateFilterState>({ fromDate: '', toDate: '' });
-  const [modifiedDateRange, setModifiedDateRange] = useState<DateFilterState>({ fromDate: '', toDate: '' });
+  const [createdDateRange, setCreatedDateRange] = useState<DateFilterState>({
+    fromDate: initialCreatedFrom,
+    toDate: initialCreatedTo
+  });
+  const [modifiedDateRange, setModifiedDateRange] = useState<DateFilterState>({
+    fromDate: initialModifiedFrom,
+    toDate: initialModifiedTo
+  });
   const [pendingStatusChange, setPendingStatusChange] = useState<
     | { kind: 'single'; leadId: string; leadName: string; status: LeadStatus }
     | { kind: 'bulk'; status: LeadStatus }
@@ -59,35 +108,123 @@ const MyLeads: React.FC = () => {
 
   const getDateFilters = () => toLeadCreatedAndModifiedDateParams(createdDateRange, modifiedDateRange);
 
-  // Initialize state from URL parameters on component mount
-  useEffect(() => {
-    const page = searchParams.get('page');
-    const size = searchParams.get('size');
-    const search = searchParams.get('search');
-    const folder = searchParams.get('folder');
-    const status = searchParams.get('status');
-    const folderFilterParam = searchParams.get('folderFilter');
+  const openLeadDetails = (leadId: string) => {
+    navigate(`/leads/${leadId}`, {
+      state: {
+        returnTo: '/my-leads',
+        returnSearch: location.search,
+        currentPage,
+        leadsPerPage,
+        statusFilter: statusFilter || undefined,
+        folderFilter: folderFilter || undefined,
+        searchQuery: appliedSearchQuery || searchQuery,
+        currentView,
+        selectedFolder: selectedFolder || undefined,
+        createdDateRange,
+        modifiedDateRange
+      }
+    });
+  };
 
-    if (page && parseInt(page) > 1) {
-      setCurrentPage(parseInt(page));
+  // Keep URL query params in sync with active filter state
+  useEffect(() => {
+    const params = new URLSearchParams();
+
+    if (currentView === 'leads') {
+      if (statusFilter) {
+        params.set('status', statusFilter);
+      }
+      if (folderFilter) {
+        params.set('folder', folderFilter);
+      }
+      if (appliedSearchQuery) {
+        params.set('search', appliedSearchQuery);
+      }
+      if (currentPage > 1) {
+        params.set('page', currentPage.toString());
+      }
+      if (leadsPerPage !== 10) {
+        params.set('size', leadsPerPage.toString());
+      }
     }
-    if (size && [10, 25, 50, 100].includes(parseInt(size))) {
-      setLeadsPerPage(parseInt(size));
+
+    if (createdDateRange.fromDate) params.set('createdFromDate', createdDateRange.fromDate);
+    if (createdDateRange.toDate) params.set('createdToDate', createdDateRange.toDate);
+    if (modifiedDateRange.fromDate) params.set('modifiedFromDate', modifiedDateRange.fromDate);
+    if (modifiedDateRange.toDate) params.set('modifiedToDate', modifiedDateRange.toDate);
+
+    const newQuery = params.toString();
+    const curQuery = location.search.startsWith('?') ? location.search.slice(1) : location.search;
+
+    const newParams = new URLSearchParams(newQuery);
+    const curParams = new URLSearchParams(curQuery);
+    newParams.sort();
+    curParams.sort();
+
+    if (newParams.toString() !== curParams.toString()) {
+      navigate(newQuery ? `/my-leads?${newQuery}` : '/my-leads', { replace: true });
     }
-    if (search) {
-      setSearchQuery(search);
+  }, [
+    currentView,
+    statusFilter,
+    folderFilter,
+    currentPage,
+    leadsPerPage,
+    appliedSearchQuery,
+    createdDateRange,
+    modifiedDateRange,
+    navigate,
+    location.search
+  ]);
+
+  // Synchronize component state when browser back/forward changes URL
+  useEffect(() => {
+    const currentParams = new URLSearchParams(location.search);
+
+    const paramPage = Number.parseInt(currentParams.get('page') || '', 10) || 1;
+    const paramSize = Number.parseInt(currentParams.get('size') || '', 10) || 10;
+    const paramSearch = currentParams.get('search') || '';
+    const paramFolder = currentParams.get('folder') || currentParams.get('folderFilter') || '';
+    const paramStatus = (currentParams.get('status') || currentParams.get('statusFilter') || '') as LeadStatus | '';
+
+    const paramCreatedFrom = currentParams.get('createdFromDate') || currentParams.get('createdFrom') || '';
+    const paramCreatedTo = currentParams.get('createdToDate') || currentParams.get('createdTo') || '';
+    const paramModifiedFrom = currentParams.get('modifiedFromDate') || currentParams.get('modifiedFrom') || '';
+    const paramModifiedTo = currentParams.get('modifiedToDate') || currentParams.get('modifiedTo') || '';
+
+    const nextView: 'folders' | 'leads' =
+      paramFolder || paramStatus || currentParams.get('view') === 'leads' ? 'leads' : 'folders';
+    const nextSelectedFolder = paramFolder || paramStatus || null;
+
+    if (paramCreatedFrom !== createdDateRange.fromDate || paramCreatedTo !== createdDateRange.toDate) {
+      setCreatedDateRange({ fromDate: paramCreatedFrom, toDate: paramCreatedTo });
     }
-    if (folder) {
-      setSelectedFolder(folder);
-      setCurrentView('leads');
+    if (paramModifiedFrom !== modifiedDateRange.fromDate || paramModifiedTo !== modifiedDateRange.toDate) {
+      setModifiedDateRange({ fromDate: paramModifiedFrom, toDate: paramModifiedTo });
     }
-    if (status) {
-      setStatusFilter(status as LeadStatus);
+    if (paramPage !== currentPage) {
+      setCurrentPage(paramPage);
     }
-    if (folderFilterParam) {
-      setFolderFilter(folderFilterParam);
+    if (paramSize !== leadsPerPage) {
+      setLeadsPerPage(paramSize);
     }
-  }, []); // Only run on mount
+    if (paramSearch !== appliedSearchQuery) {
+      setSearchQuery(paramSearch);
+      setAppliedSearchQuery(paramSearch);
+    }
+    if (paramStatus !== statusFilter) {
+      setStatusFilter(paramStatus);
+    }
+    if (paramFolder !== folderFilter) {
+      setFolderFilter(paramFolder);
+    }
+    if (nextView !== currentView) {
+      setCurrentView(nextView);
+    }
+    if (nextSelectedFolder !== selectedFolder) {
+      setSelectedFolder(nextSelectedFolder);
+    }
+  }, [location.search]);
 
   useEffect(() => {
     fetchStatuses();
@@ -366,6 +503,7 @@ const MyLeads: React.FC = () => {
                   setCurrentView('folders');
                   setSelectedFolder(null);
                   setFolderFilter('');
+                  setStatusFilter('');
                   setSelectedLeads([]);
                 }}
                 className="btn btn-outline btn-sm"
@@ -764,7 +902,7 @@ const MyLeads: React.FC = () => {
                     className={`hover:bg-gray-50 transition-colors cursor-pointer ${
                       selectedLeads.includes(lead._id) ? 'bg-blue-50' : index % 2 === 0 ? 'bg-white' : 'bg-gray-25'
                     }`}
-                    onClick={() => navigate(`/leads/${lead._id}`)}
+                    onClick={() => openLeadDetails(lead._id)}
                   >
                     <td className="whitespace-nowrap py-4 px-6" onClick={(e) => e.stopPropagation()}>
                       <input
@@ -880,18 +1018,7 @@ const MyLeads: React.FC = () => {
                     </td>
                     <td className="whitespace-nowrap py-4 px-6" onClick={(e) => e.stopPropagation()}>
                       <button
-                        onClick={() => navigate(`/leads/${lead._id}`, {
-                          state: {
-                            returnTo: '/my-leads',
-                            currentPage,
-                            leadsPerPage,
-                            statusFilter,
-                            folderFilter,
-                            searchQuery,
-                            currentView,
-                            selectedFolder
-                          }
-                        })}
+                        onClick={() => openLeadDetails(lead._id)}
                         className="text-blue-600 hover:text-blue-800 hover:bg-blue-50 p-2 rounded-full transition-colors"
                         title="View Details"
                       >
