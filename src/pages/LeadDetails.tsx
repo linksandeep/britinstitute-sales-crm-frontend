@@ -65,7 +65,7 @@ export interface ReturnState {
   modifiedToDate?: string;
 }
 
-const defaultStatusOptions: LeadStatus[] = [
+export const defaultStatusOptions: LeadStatus[] = [
   'New',
   'Contacted',
   'Follow-up',
@@ -459,6 +459,11 @@ const LeadDetails: React.FC = () => {
     const state = location.state as ReturnState | null;
 
     if (state?.returnTo) {
+      if (state.returnTo.includes('?')) {
+        navigate(state.returnTo, { replace: true, state });
+        return;
+      }
+
       const baseSearch = state.returnSearch
         ? (state.returnSearch.startsWith('?') ? state.returnSearch.slice(1) : state.returnSearch)
         : '';
@@ -467,15 +472,18 @@ const LeadDetails: React.FC = () => {
       if (state.currentPage && state.currentPage > 1) params.set('page', state.currentPage.toString());
       if (state.leadsPerPage && state.leadsPerPage !== 10) params.set('size', state.leadsPerPage.toString());
       if (state.searchQuery) params.set('search', state.searchQuery);
-      if (state.currentView === 'leads' && state.selectedFolder && state.filters?.folder?.length) {
-        params.set('folder', state.selectedFolder);
-      }
       if (state.statusFilter) params.set('statusFilter', state.statusFilter);
       if (state.folderFilter) params.set('folderFilter', state.folderFilter);
       if (state.filters?.status?.length) params.set('statusFilter', state.filters.status.join(','));
       if (state.filters?.source?.length) params.set('sourceFilter', state.filters.source.join(','));
       if (state.filters?.priority?.length) params.set('priorityFilter', state.filters.priority.join(','));
       if (state.filters?.assignedTo?.length) params.set('assignedTo', state.filters.assignedTo.join(','));
+      if (
+        state.filters?.folder?.length &&
+        !(defaultStatusOptions as string[]).includes(state.filters.folder[0])
+      ) {
+        params.set('folder', state.filters.folder[0]);
+      }
 
       const createdFrom = state.createdDateRange?.fromDate || state.createdFromDate;
       const createdTo = state.createdDateRange?.toDate || state.createdToDate;

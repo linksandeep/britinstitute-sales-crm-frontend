@@ -3,7 +3,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { leadApi, userApi, statusApi } from '../lib/api';
 import type { Lead, LeadStatus, LeadSource, LeadPriority, LeadFilters, User } from '../types';
-import type { ReturnState } from './LeadDetails';
+import { defaultStatusOptions, type ReturnState } from './LeadDetails';
 import LeadWhatsAppButton from '../components/LeadWhatsAppButton';
 import QuickLeadSearch from '../components/QuickLeadSearch';
 import StatusReminderDialog from '../components/StatusReminderDialog';
@@ -38,12 +38,23 @@ const AllLeads: React.FC = () => {
   const initialPage = Number.parseInt(searchParams.get('page') || '', 10) || returnState?.currentPage || 1;
   const initialPageSize = Number.parseInt(searchParams.get('size') || '', 10) || returnState?.leadsPerPage || 10;
   const initialSearch = searchParams.get('search') || returnState?.searchQuery || '';
-  const initialFolder = searchParams.get('folder') || searchParams.get('folderFilter') || returnState?.selectedFolder || returnState?.filters?.folder?.[0] || null;
-
+  
   const rawStatus = searchParams.get('statusFilter') || searchParams.get('status');
+  const initialFolderParam = searchParams.get('folder') || searchParams.get('folderFilter');
+  const isFolderActuallyStatus =
+    Boolean(initialFolderParam) &&
+    (initialFolderParam === rawStatus ||
+      (defaultStatusOptions as string[]).includes(initialFolderParam!));
+
   const initialStatuses = rawStatus
     ? (rawStatus.split(',').filter(Boolean) as LeadStatus[])
+    : isFolderActuallyStatus
+    ? [initialFolderParam as LeadStatus]
     : (returnState?.filters?.status as LeadStatus[]) || (returnState?.statusFilter ? [returnState.statusFilter as LeadStatus] : []);
+
+  const initialFolder = isFolderActuallyStatus
+    ? null
+    : initialFolderParam || returnState?.selectedFolder || returnState?.filters?.folder?.[0] || null;
 
   const rawSources = searchParams.get('sourceFilter');
   const initialSources = rawSources
@@ -163,148 +174,76 @@ const AllLeads: React.FC = () => {
     fetchStatuses();
   }, []);
 
-  // Keep URL query params in sync with active filter state
   useEffect(() => {
-    const params = new URLSearchParams();
+    // If URL has duplicate folder param matching a status, clean it from the URL
+    if (isFolderActuallyStatus && searchParams.has('folder')) {
+      const cleanParams = new URLSearchParams(location.search);
+      cleanParams.delete('folder');
+      cleanParams.delete('folderFilter');
+      if (initialFolderParam && !cleanParams.has('statusFilter')) {
+        cleanParams.set('statusFilter', initialFolderParam);
+      }
+      navigate(`${location.pathname}?${cleanParams.toString()}`, { replace: true });
+    }
+  }, []);
 
-    if (currentView === 'leads') {
-      if (selectedFolder) {
-        if (filters.folder?.length && !statusOptions.includes(selectedFolder)) {
-          params.set('folder', selectedFolder);
-        } else if (filters.status?.length) {
-          params.set('statusFilter', filters.status.join(','));
-        } else {
-          params.set('folder', selectedFolder);
-        }
-      } else if (filters.folder?.length) {
-        params.set('folder', filters.folder.join(','));
-      }
-      if (filters.status?.length && !params.has('statusFilter')) {
-        params.set('statusFilter', filters.status.join(','));
-      }
-      if (filters.source?.length) {
-        params.set('sourceFilter', filters.source.join(','));
-      }
-      if (filters.priority?.length) {
-        params.set('priorityFilter', filters.priority.join(','));
-      }
-      if (filters.assignedTo?.length) {
-        params.set('assignedTo', filters.assignedTo.join(','));
-      }
-      if (appliedSearchQuery) {
-        params.set('search', appliedSearchQuery);
-      }
-      if (currentPage > 1) {
-        params.set('page', currentPage.toString());
-      }
-      if (leadsPerPage !== 10) {
-        params.set('size', leadsPerPage.toString());
+  const updateUrlParams = (updates: Record<string, string | null | undefined>) => {
+    const params = new URLSearchParams(location.search);
+    for (const [key, value] of Object.entries(updates)) {
+      if (value === null || value === undefined || value === '') {
+        params.delete(key);
+      } else {
+        params.set(key, value);
       }
     }
+    const qs = params.toString();
+    navigate(qs ? `${location.pathname}?${qs}` : location.pathname, { replace: true });
+  };
 
-    if (createdDateRange.fromDate) params.set('createdFromDate', createdDateRange.fromDate);
-    if (createdDateRange.toDate) params.set('createdToDate', createdDateRange.toDate);
-    if (modifiedDateRange.fromDate) params.set('modifiedFromDate', modifiedDateRange.fromDate);
-    if (modifiedDateRange.toDate) params.set('modifiedToDate', modifiedDateRange.toDate);
+  const handleDateChange = (
+    type: 'created' | 'modified',
+    field: 'fromDate' | 'toDate',
+    value: string
+  ) => {
+    const nextCreated = type === 'created' ? { ...createdDateRange, [field]: value } : createdDateRange;
+    const nextModified = type === 'modified' ? { ...modifiedDateRange, [field]: value } : modifiedDateRange;
 
-    const newQuery = params.toString();
-    const curQuery = location.search.startsWith('?') ? location.search.slice(1) : location.search;
+    if (type === 'created') setCreatedDateRange(nextCreated);
+    if (type === 'modified') setModifiedDateRange(nextModified);
+    setCurrentPage(1);
+    setSelectedLeads([]);
 
-    const newParams = new URLSearchParams(newQuery);
-    const curParams = new URLSearchParams(curQuery);
-    newParams.sort();
-    curParams.sort();
-
-    if (newParams.toString() !== curParams.toString()) {
-      navigate(newQuery ? `/leads?${newQuery}` : '/leads', { replace: true });
-    }
-  }, [
-    currentView,
-    selectedFolder,
-    currentPage,
-    leadsPerPage,
-    appliedSearchQuery,
-    filters,
-    createdDateRange,
-    modifiedDateRange,
-    statusOptions,
-    navigate,
-    location.search
-  ]);
-
-  // Synchronize component state when browser back/forward changes URL
-  useEffect(() => {
-    const currentParams = new URLSearchParams(location.search);
-
-    const paramPage = Number.parseInt(currentParams.get('page') || '', 10) || 1;
-    const paramSize = Number.parseInt(currentParams.get('size') || '', 10) || 10;
-    const paramSearch = currentParams.get('search') || '';
-    const paramFolder = currentParams.get('folder') || currentParams.get('folderFilter') || null;
-    const rawParamStatus = currentParams.get('statusFilter') || currentParams.get('status') || '';
-    const paramStatuses = rawParamStatus ? (rawParamStatus.split(',').filter(Boolean) as LeadStatus[]) : [];
-    const rawParamSource = currentParams.get('sourceFilter') || '';
-    const paramSources = rawParamSource ? (rawParamSource.split(',').filter(Boolean) as LeadSource[]) : [];
-    const rawParamPriority = currentParams.get('priorityFilter') || '';
-    const paramPriorities = rawParamPriority ? (rawParamPriority.split(',').filter(Boolean) as LeadPriority[]) : [];
-    const rawParamAssigned = currentParams.get('assignedTo') || '';
-    const paramAssigned = rawParamAssigned ? rawParamAssigned.split(',').filter(Boolean) : [];
-
-    const paramCreatedFrom = currentParams.get('createdFromDate') || currentParams.get('createdFrom') || '';
-    const paramCreatedTo = currentParams.get('createdToDate') || currentParams.get('createdTo') || '';
-    const paramModifiedFrom = currentParams.get('modifiedFromDate') || currentParams.get('modifiedFrom') || '';
-    const paramModifiedTo = currentParams.get('modifiedToDate') || currentParams.get('modifiedTo') || '';
-
-    const nextView: 'folders' | 'leads' =
-      paramFolder || paramStatuses.length > 0 || currentParams.get('view') === 'leads' ? 'leads' : 'folders';
-    const nextSelectedFolder = paramFolder || paramStatuses[0] || null;
-
-    if (paramCreatedFrom !== createdDateRange.fromDate || paramCreatedTo !== createdDateRange.toDate) {
-      setCreatedDateRange({ fromDate: paramCreatedFrom, toDate: paramCreatedTo });
-    }
-    if (paramModifiedFrom !== modifiedDateRange.fromDate || paramModifiedTo !== modifiedDateRange.toDate) {
-      setModifiedDateRange({ fromDate: paramModifiedFrom, toDate: paramModifiedTo });
-    }
-    if (paramPage !== currentPage) {
-      setCurrentPage(paramPage);
-    }
-    if (paramSize !== leadsPerPage) {
-      setLeadsPerPage(paramSize);
-    }
-    if (paramSearch !== appliedSearchQuery) {
-      setSearchQuery(paramSearch);
-      setAppliedSearchQuery(paramSearch);
-    }
-    if (nextView !== currentView) {
-      setCurrentView(nextView);
-    }
-    if (nextSelectedFolder !== selectedFolder) {
-      setSelectedFolder(nextSelectedFolder);
-    }
-    setFilters(prev => {
-      const prevStatus = prev.status || [];
-      const prevFolder = prev.folder || [];
-      const prevSource = prev.source || [];
-      const prevPriority = prev.priority || [];
-      const prevAssigned = prev.assignedTo || [];
-
-      const isStatusEqual = prevStatus.length === paramStatuses.length && prevStatus.every((s, i) => s === paramStatuses[i]);
-      const isFolderEqual = prevFolder.length === (paramFolder ? 1 : 0) && (!paramFolder || prevFolder[0] === paramFolder);
-      const isSourceEqual = prevSource.length === paramSources.length && prevSource.every((s, i) => s === paramSources[i]);
-      const isPriorityEqual = prevPriority.length === paramPriorities.length && prevPriority.every((p, i) => p === paramPriorities[i]);
-      const isAssignedEqual = prevAssigned.length === paramAssigned.length && prevAssigned.every((a, i) => a === paramAssigned[i]);
-
-      if (isStatusEqual && isFolderEqual && isSourceEqual && isPriorityEqual && isAssignedEqual) {
-        return prev;
-      }
-      return {
-        status: paramStatuses,
-        folder: paramFolder ? [paramFolder] : [],
-        source: paramSources,
-        priority: paramPriorities,
-        assignedTo: paramAssigned
-      };
+    updateUrlParams({
+      createdFromDate: nextCreated.fromDate || null,
+      createdToDate: nextCreated.toDate || null,
+      createdFrom: null,
+      createdTo: null,
+      modifiedFromDate: nextModified.fromDate || null,
+      modifiedToDate: nextModified.toDate || null,
+      modifiedFrom: null,
+      modifiedTo: null,
+      page: null
     });
-  }, [location.search]);
+  };
+
+  const handleClearDates = () => {
+    setCreatedDateRange({ fromDate: '', toDate: '' });
+    setModifiedDateRange({ fromDate: '', toDate: '' });
+    setCurrentPage(1);
+    setSelectedLeads([]);
+
+    updateUrlParams({
+      createdFromDate: null,
+      createdToDate: null,
+      createdFrom: null,
+      createdTo: null,
+      modifiedFromDate: null,
+      modifiedToDate: null,
+      modifiedFrom: null,
+      modifiedTo: null,
+      page: null
+    });
+  };
 
   const fetchStatuses = async () => {
     try {
@@ -393,16 +332,33 @@ const AllLeads: React.FC = () => {
     }
   };
   const handleFilterChange = (filterType: keyof LeadFilters, value: any) => {
+    const updatedValues = Array.isArray(filters[filterType]) 
+      ? (filters[filterType] as any[]).includes(value)
+        ? (filters[filterType] as any[]).filter(item => item !== value)
+        : [...(filters[filterType] as any[]), value]
+      : [value];
+
     setFilters(prev => ({
       ...prev,
-      [filterType]: Array.isArray(prev[filterType]) 
-        ? (prev[filterType] as any[]).includes(value)
-          ? (prev[filterType] as any[]).filter(item => item !== value)
-          : [...(prev[filterType] as any[]), value]
-        : [value]
+      [filterType]: updatedValues
     }));
     setCurrentPage(1);
-    setSelectedLeads([]); // Clear selection when filters change
+    setSelectedLeads([]);
+
+    const paramMap: Partial<Record<keyof LeadFilters, string>> = {
+      status: 'statusFilter',
+      source: 'sourceFilter',
+      priority: 'priorityFilter',
+      assignedTo: 'assignedTo',
+      folder: 'folder'
+    };
+    const paramKey = paramMap[filterType];
+    if (paramKey) {
+      updateUrlParams({
+        [paramKey]: updatedValues.length > 0 ? updatedValues.join(',') : null,
+        page: null
+      });
+    }
   };
 
   const clearFilters = () => {
@@ -415,21 +371,46 @@ const AllLeads: React.FC = () => {
     setSearchQuery('');
     setAppliedSearchQuery('');
     setCurrentPage(1);
-    setSelectedLeads([]); // Clear selection when filters are cleared
+    setSelectedLeads([]);
+
+    updateUrlParams({
+      sourceFilter: null,
+      priorityFilter: null,
+      assignedTo: null,
+      search: null,
+      page: null,
+      createdFromDate: null,
+      createdToDate: null,
+      createdFrom: null,
+      createdTo: null,
+      modifiedFromDate: null,
+      modifiedToDate: null,
+      modifiedFrom: null,
+      modifiedTo: null
+    });
   };
 
   const handleFolderSelect = (folder: string) => {
     setSelectedFolder(folder);
     if (folder === 'Uncategorized') {
-      setFilters(prev => ({ ...prev, folder: ['Uncategorized'], status: [] })); // Clear status filter
+      setFilters(prev => ({ ...prev, folder: ['Uncategorized'], status: [] }));
     } else {
-      setFilters(prev => ({ ...prev, folder: [folder], status: [] })); // Clear status filter
+      setFilters(prev => ({ ...prev, folder: [folder], status: [] }));
     }
     setCurrentView('leads');
     setSearchQuery('');
     setAppliedSearchQuery('');
     setCurrentPage(1);
     setSelectedLeads([]);
+
+    updateUrlParams({
+      folder,
+      folderFilter: null,
+      statusFilter: null,
+      status: null,
+      search: null,
+      page: null
+    });
   };
 
   const handleStatusSelect = (status: LeadStatus) => {
@@ -440,6 +421,15 @@ const AllLeads: React.FC = () => {
     setAppliedSearchQuery('');
     setCurrentPage(1);
     setSelectedLeads([]);
+
+    updateUrlParams({
+      statusFilter: status,
+      status: null,
+      folder: null,
+      folderFilter: null,
+      search: null,
+      page: null
+    });
   };
 
   const handleBackToFolders = () => {
@@ -450,12 +440,24 @@ const AllLeads: React.FC = () => {
     setAppliedSearchQuery('');
     setCurrentPage(1);
     setSelectedLeads([]);
+
+    updateUrlParams({
+      folder: null,
+      folderFilter: null,
+      statusFilter: null,
+      status: null,
+      search: null,
+      page: null,
+      sourceFilter: null,
+      priorityFilter: null,
+      assignedTo: null
+    });
   };
 
   const openLeadDetails = (leadId: string) => {
     navigate(`/leads/${leadId}`, {
       state: {
-        returnTo: '/leads',
+        returnTo: location.pathname + location.search,
         returnSearch: location.search,
         currentPage,
         leadsPerPage,
@@ -471,13 +473,15 @@ const AllLeads: React.FC = () => {
 
   const handlePageChange = (page: number) => {
     setCurrentPage(page);
-    setSelectedLeads([]); // Clear selection when changing pages
+    setSelectedLeads([]);
+    updateUrlParams({ page: page > 1 ? page.toString() : null });
   };
 
   const handlePageSizeChange = (newPageSize: number) => {
     setLeadsPerPage(newPageSize);
     setCurrentPage(1);
-    setSelectedLeads([]); // Clear selection when changing page size
+    setSelectedLeads([]);
+    updateUrlParams({ size: newPageSize !== 10 ? newPageSize.toString() : null, page: null });
   };
 
   const handleSelectLead = (leadId: string) => {
@@ -731,11 +735,7 @@ const AllLeads: React.FC = () => {
                 type="date"
                 value={createdDateRange.fromDate}
                 max={createdDateRange.toDate || undefined}
-                onChange={(event) => {
-                  setCreatedDateRange((current) => ({ ...current, fromDate: event.target.value }));
-                  setCurrentPage(1);
-                  setSelectedLeads([]);
-                }}
+                onChange={(event) => handleDateChange('created', 'fromDate', event.target.value)}
                 className="form-input"
               />
             </div>
@@ -745,11 +745,7 @@ const AllLeads: React.FC = () => {
                 type="date"
                 value={createdDateRange.toDate}
                 min={createdDateRange.fromDate || undefined}
-                onChange={(event) => {
-                  setCreatedDateRange((current) => ({ ...current, toDate: event.target.value }));
-                  setCurrentPage(1);
-                  setSelectedLeads([]);
-                }}
+                onChange={(event) => handleDateChange('created', 'toDate', event.target.value)}
                 className="form-input"
               />
             </div>
@@ -759,11 +755,7 @@ const AllLeads: React.FC = () => {
                 type="date"
                 value={modifiedDateRange.fromDate}
                 max={modifiedDateRange.toDate || undefined}
-                onChange={(event) => {
-                  setModifiedDateRange((current) => ({ ...current, fromDate: event.target.value }));
-                  setCurrentPage(1);
-                  setSelectedLeads([]);
-                }}
+                onChange={(event) => handleDateChange('modified', 'fromDate', event.target.value)}
                 className="form-input"
               />
             </div>
@@ -773,22 +765,13 @@ const AllLeads: React.FC = () => {
                 type="date"
                 value={modifiedDateRange.toDate}
                 min={modifiedDateRange.fromDate || undefined}
-                onChange={(event) => {
-                  setModifiedDateRange((current) => ({ ...current, toDate: event.target.value }));
-                  setCurrentPage(1);
-                  setSelectedLeads([]);
-                }}
+                onChange={(event) => handleDateChange('modified', 'toDate', event.target.value)}
                 className="form-input"
               />
             </div>
             <button
               type="button"
-              onClick={() => {
-                setCreatedDateRange({ fromDate: '', toDate: '' });
-                setModifiedDateRange({ fromDate: '', toDate: '' });
-                setCurrentPage(1);
-                setSelectedLeads([]);
-              }}
+              onClick={handleClearDates}
               className="btn btn-secondary"
             >
               Clear Dates
@@ -808,6 +791,7 @@ const AllLeads: React.FC = () => {
               e.preventDefault();
               setAppliedSearchQuery(searchQuery);
               setCurrentPage(1);
+              updateUrlParams({ search: searchQuery || null, page: null });
             }} className="flex gap-4">
               <div className="flex-1 relative">
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />

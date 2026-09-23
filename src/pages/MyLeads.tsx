@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { leadApi, statusApi } from '../lib/api';
 import type { Lead, LeadStatus } from '../types';
-import type { ReturnState } from './LeadDetails';
+import { defaultStatusOptions, type ReturnState } from './LeadDetails';
 import LeadWhatsAppButton from '../components/LeadWhatsAppButton';
 import QuickLeadSearch from '../components/QuickLeadSearch';
 import StatusReminderDialog from '../components/StatusReminderDialog';
@@ -33,8 +33,15 @@ const MyLeads: React.FC = () => {
   const initialPage = Number.parseInt(searchParams.get('page') || '', 10) || returnState?.currentPage || 1;
   const initialPageSize = Number.parseInt(searchParams.get('size') || '', 10) || returnState?.leadsPerPage || 10;
   const initialSearch = searchParams.get('search') || returnState?.searchQuery || '';
-  const initialFolder = searchParams.get('folder') || searchParams.get('folderFilter') || returnState?.folderFilter || returnState?.selectedFolder || '';
-  const initialStatus = (searchParams.get('status') || searchParams.get('statusFilter') || returnState?.statusFilter || returnState?.filters?.status?.[0] || '') as LeadStatus | '';
+
+  const rawStatus = (searchParams.get('status') || searchParams.get('statusFilter') || returnState?.statusFilter || returnState?.filters?.status?.[0] || '') as LeadStatus | '';
+  const rawFolderParam = searchParams.get('folder') || searchParams.get('folderFilter') || returnState?.folderFilter || returnState?.selectedFolder || '';
+  const isFolderActuallyStatus =
+    Boolean(rawFolderParam) &&
+    (rawFolderParam === rawStatus || (defaultStatusOptions as string[]).includes(rawFolderParam));
+
+  const initialStatus = (rawStatus || (isFolderActuallyStatus ? (rawFolderParam as LeadStatus) : '')) as LeadStatus | '';
+  const initialFolder = isFolderActuallyStatus ? '' : rawFolderParam;
 
   const initialCreatedFrom =
     searchParams.get('createdFromDate') ||
@@ -111,7 +118,7 @@ const MyLeads: React.FC = () => {
   const openLeadDetails = (leadId: string) => {
     navigate(`/leads/${leadId}`, {
       state: {
-        returnTo: '/my-leads',
+        returnTo: location.pathname + location.search,
         returnSearch: location.search,
         currentPage,
         leadsPerPage,
@@ -126,105 +133,75 @@ const MyLeads: React.FC = () => {
     });
   };
 
-  // Keep URL query params in sync with active filter state
   useEffect(() => {
-    const params = new URLSearchParams();
-
-    if (currentView === 'leads') {
-      if (statusFilter) {
-        params.set('status', statusFilter);
+    if (isFolderActuallyStatus && searchParams.has('folder')) {
+      const cleanParams = new URLSearchParams(location.search);
+      cleanParams.delete('folder');
+      cleanParams.delete('folderFilter');
+      if (rawFolderParam && !cleanParams.has('status') && !cleanParams.has('statusFilter')) {
+        cleanParams.set('status', rawFolderParam);
       }
-      if (folderFilter) {
-        params.set('folder', folderFilter);
+      navigate(`${location.pathname}?${cleanParams.toString()}`, { replace: true });
+    }
+  }, []);
+
+  const updateUrlParams = (updates: Record<string, string | null | undefined>) => {
+    const params = new URLSearchParams(location.search);
+    for (const [key, value] of Object.entries(updates)) {
+      if (value === null || value === undefined || value === '') {
+        params.delete(key);
+      } else {
+        params.set(key, value);
       }
-      if (appliedSearchQuery) {
-        params.set('search', appliedSearchQuery);
-      }
-      if (currentPage > 1) {
-        params.set('page', currentPage.toString());
-      }
-      if (leadsPerPage !== 10) {
-        params.set('size', leadsPerPage.toString());
-      }
     }
+    const qs = params.toString();
+    navigate(qs ? `${location.pathname}?${qs}` : location.pathname, { replace: true });
+  };
 
-    if (createdDateRange.fromDate) params.set('createdFromDate', createdDateRange.fromDate);
-    if (createdDateRange.toDate) params.set('createdToDate', createdDateRange.toDate);
-    if (modifiedDateRange.fromDate) params.set('modifiedFromDate', modifiedDateRange.fromDate);
-    if (modifiedDateRange.toDate) params.set('modifiedToDate', modifiedDateRange.toDate);
+  const handleDateChange = (
+    type: 'created' | 'modified',
+    field: 'fromDate' | 'toDate',
+    value: string
+  ) => {
+    const nextCreated = type === 'created' ? { ...createdDateRange, [field]: value } : createdDateRange;
+    const nextModified = type === 'modified' ? { ...modifiedDateRange, [field]: value } : modifiedDateRange;
 
-    const newQuery = params.toString();
-    const curQuery = location.search.startsWith('?') ? location.search.slice(1) : location.search;
+    if (type === 'created') setCreatedDateRange(nextCreated);
+    if (type === 'modified') setModifiedDateRange(nextModified);
+    setCurrentPage(1);
+    setSelectedLeads([]);
 
-    const newParams = new URLSearchParams(newQuery);
-    const curParams = new URLSearchParams(curQuery);
-    newParams.sort();
-    curParams.sort();
+    updateUrlParams({
+      createdFromDate: nextCreated.fromDate || null,
+      createdToDate: nextCreated.toDate || null,
+      createdFrom: null,
+      createdTo: null,
+      modifiedFromDate: nextModified.fromDate || null,
+      modifiedToDate: nextModified.toDate || null,
+      modifiedFrom: null,
+      modifiedTo: null,
+      page: null
+    });
+  };
 
-    if (newParams.toString() !== curParams.toString()) {
-      navigate(newQuery ? `/my-leads?${newQuery}` : '/my-leads', { replace: true });
-    }
-  }, [
-    currentView,
-    statusFilter,
-    folderFilter,
-    currentPage,
-    leadsPerPage,
-    appliedSearchQuery,
-    createdDateRange,
-    modifiedDateRange,
-    navigate,
-    location.search
-  ]);
+  const handleClearDates = () => {
+    setCreatedDateRange({ fromDate: '', toDate: '' });
+    setModifiedDateRange({ fromDate: '', toDate: '' });
+    setCurrentPage(1);
+    setSelectedLeads([]);
 
-  // Synchronize component state when browser back/forward changes URL
-  useEffect(() => {
-    const currentParams = new URLSearchParams(location.search);
-
-    const paramPage = Number.parseInt(currentParams.get('page') || '', 10) || 1;
-    const paramSize = Number.parseInt(currentParams.get('size') || '', 10) || 10;
-    const paramSearch = currentParams.get('search') || '';
-    const paramFolder = currentParams.get('folder') || currentParams.get('folderFilter') || '';
-    const paramStatus = (currentParams.get('status') || currentParams.get('statusFilter') || '') as LeadStatus | '';
-
-    const paramCreatedFrom = currentParams.get('createdFromDate') || currentParams.get('createdFrom') || '';
-    const paramCreatedTo = currentParams.get('createdToDate') || currentParams.get('createdTo') || '';
-    const paramModifiedFrom = currentParams.get('modifiedFromDate') || currentParams.get('modifiedFrom') || '';
-    const paramModifiedTo = currentParams.get('modifiedToDate') || currentParams.get('modifiedTo') || '';
-
-    const nextView: 'folders' | 'leads' =
-      paramFolder || paramStatus || currentParams.get('view') === 'leads' ? 'leads' : 'folders';
-    const nextSelectedFolder = paramFolder || paramStatus || null;
-
-    if (paramCreatedFrom !== createdDateRange.fromDate || paramCreatedTo !== createdDateRange.toDate) {
-      setCreatedDateRange({ fromDate: paramCreatedFrom, toDate: paramCreatedTo });
-    }
-    if (paramModifiedFrom !== modifiedDateRange.fromDate || paramModifiedTo !== modifiedDateRange.toDate) {
-      setModifiedDateRange({ fromDate: paramModifiedFrom, toDate: paramModifiedTo });
-    }
-    if (paramPage !== currentPage) {
-      setCurrentPage(paramPage);
-    }
-    if (paramSize !== leadsPerPage) {
-      setLeadsPerPage(paramSize);
-    }
-    if (paramSearch !== appliedSearchQuery) {
-      setSearchQuery(paramSearch);
-      setAppliedSearchQuery(paramSearch);
-    }
-    if (paramStatus !== statusFilter) {
-      setStatusFilter(paramStatus);
-    }
-    if (paramFolder !== folderFilter) {
-      setFolderFilter(paramFolder);
-    }
-    if (nextView !== currentView) {
-      setCurrentView(nextView);
-    }
-    if (nextSelectedFolder !== selectedFolder) {
-      setSelectedFolder(nextSelectedFolder);
-    }
-  }, [location.search]);
+    updateUrlParams({
+      createdFromDate: null,
+      createdToDate: null,
+      createdFrom: null,
+      createdTo: null,
+      modifiedFromDate: null,
+      modifiedToDate: null,
+      modifiedFrom: null,
+      modifiedTo: null,
+      page: null
+    });
+  };
 
   useEffect(() => {
     fetchStatuses();
@@ -311,17 +288,20 @@ const MyLeads: React.FC = () => {
     e.preventDefault();
     setAppliedSearchQuery(searchQuery);
     setCurrentPage(1);
+    updateUrlParams({ search: searchQuery || null, page: null });
   };
 
   const handlePageChange = (page: number) => {
     setCurrentPage(page);
-    setSelectedLeads([]); // Clear selection when changing pages
+    setSelectedLeads([]);
+    updateUrlParams({ page: page > 1 ? page.toString() : null });
   };
 
   const handlePageSizeChange = (size: number) => {
     setLeadsPerPage(size);
     setCurrentPage(1);
-    setSelectedLeads([]); // Clear selection when changing page size
+    setSelectedLeads([]);
+    updateUrlParams({ size: size !== 10 ? size.toString() : null, page: null });
   };
 
   const fetchStatuses = async () => {
@@ -505,6 +485,14 @@ const MyLeads: React.FC = () => {
                   setFolderFilter('');
                   setStatusFilter('');
                   setSelectedLeads([]);
+                  updateUrlParams({
+                    folder: null,
+                    folderFilter: null,
+                    status: null,
+                    statusFilter: null,
+                    search: null,
+                    page: null
+                  });
                 }}
                 className="btn btn-outline btn-sm"
                 title="Back to folders"
@@ -543,7 +531,6 @@ const MyLeads: React.FC = () => {
         </div>
    
 
-
       </div>
 
       <div className="card">
@@ -555,11 +542,7 @@ const MyLeads: React.FC = () => {
                 type="date"
                 value={createdDateRange.fromDate}
                 max={createdDateRange.toDate || undefined}
-                onChange={(event) => {
-                  setCreatedDateRange((current) => ({ ...current, fromDate: event.target.value }));
-                  setCurrentPage(1);
-                  setSelectedLeads([]);
-                }}
+                onChange={(event) => handleDateChange('created', 'fromDate', event.target.value)}
                 className="form-input"
               />
             </div>
@@ -569,11 +552,7 @@ const MyLeads: React.FC = () => {
                 type="date"
                 value={createdDateRange.toDate}
                 min={createdDateRange.fromDate || undefined}
-                onChange={(event) => {
-                  setCreatedDateRange((current) => ({ ...current, toDate: event.target.value }));
-                  setCurrentPage(1);
-                  setSelectedLeads([]);
-                }}
+                onChange={(event) => handleDateChange('created', 'toDate', event.target.value)}
                 className="form-input"
               />
             </div>
@@ -583,11 +562,7 @@ const MyLeads: React.FC = () => {
                 type="date"
                 value={modifiedDateRange.fromDate}
                 max={modifiedDateRange.toDate || undefined}
-                onChange={(event) => {
-                  setModifiedDateRange((current) => ({ ...current, fromDate: event.target.value }));
-                  setCurrentPage(1);
-                  setSelectedLeads([]);
-                }}
+                onChange={(event) => handleDateChange('modified', 'fromDate', event.target.value)}
                 className="form-input"
               />
             </div>
@@ -597,22 +572,13 @@ const MyLeads: React.FC = () => {
                 type="date"
                 value={modifiedDateRange.toDate}
                 min={modifiedDateRange.fromDate || undefined}
-                onChange={(event) => {
-                  setModifiedDateRange((current) => ({ ...current, toDate: event.target.value }));
-                  setCurrentPage(1);
-                  setSelectedLeads([]);
-                }}
+                onChange={(event) => handleDateChange('modified', 'toDate', event.target.value)}
                 className="form-input"
               />
             </div>
             <button
               type="button"
-              onClick={() => {
-                setCreatedDateRange({ fromDate: '', toDate: '' });
-                setModifiedDateRange({ fromDate: '', toDate: '' });
-                setCurrentPage(1);
-                setSelectedLeads([]);
-              }}
+              onClick={handleClearDates}
               className="btn btn-secondary"
             >
               Clear Dates
@@ -693,7 +659,12 @@ const MyLeads: React.FC = () => {
               <div>
                 <select
                   value={statusFilter}
-                  onChange={(e) => setStatusFilter(e.target.value as LeadStatus | '')}
+                  onChange={(e) => {
+                    const nextStatus = e.target.value as LeadStatus | '';
+                    setStatusFilter(nextStatus);
+                    setCurrentPage(1);
+                    updateUrlParams({ status: nextStatus || null, page: null });
+                  }}
                   disabled={!!(selectedFolder && statusOptions.includes(selectedFolder as LeadStatus))}
                   className="form-input w-full disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-gray-100"
                 >
@@ -721,7 +692,18 @@ const MyLeads: React.FC = () => {
                   setCreatedDateRange({ fromDate: '', toDate: '' });
                   setModifiedDateRange({ fromDate: '', toDate: '' });
                   setCurrentPage(1);
-                  // Don't clear folder/status filter - it stays locked
+                  updateUrlParams({
+                    search: null,
+                    page: null,
+                    createdFromDate: null,
+                    createdToDate: null,
+                    createdFrom: null,
+                    createdTo: null,
+                    modifiedFromDate: null,
+                    modifiedToDate: null,
+                    modifiedFrom: null,
+                    modifiedTo: null
+                  });
                 }}
                 className="btn btn-secondary w-full"
               >
@@ -754,8 +736,16 @@ const MyLeads: React.FC = () => {
                     setSelectedFolder(status);
                     setCurrentView('leads');
                     setStatusFilter(status);
-                    setFolderFilter(''); // Clear folder filter when selecting status
+                    setFolderFilter('');
                     setCurrentPage(1);
+                    updateUrlParams({
+                      status: status,
+                      statusFilter: null,
+                      folder: null,
+                      folderFilter: null,
+                      search: null,
+                      page: null
+                    });
                   }}
                 >
 	                  <div className="lead-category-card__content">
@@ -782,13 +772,18 @@ const MyLeads: React.FC = () => {
                   onClick={() => {
                     setSelectedFolder(folder);
                     setCurrentView('leads');
-                    setStatusFilter(''); // Clear status filter when selecting folder
+                    setStatusFilter('');
+                    const targetFolder = folder === 'Uncategorized' ? '' : folder;
+                    setFolderFilter(targetFolder);
                     setCurrentPage(1);
-                    if (folder === 'Uncategorized') {
-                      setFolderFilter('');
-                    } else {
-                      setFolderFilter(folder);
-                    }
+                    updateUrlParams({
+                      folder: targetFolder || null,
+                      folderFilter: null,
+                      status: null,
+                      statusFilter: null,
+                      search: null,
+                      page: null
+                    });
                   }}
                 >
 	                  <div className="lead-category-card__content">
