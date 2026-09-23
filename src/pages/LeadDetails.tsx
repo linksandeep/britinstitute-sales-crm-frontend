@@ -459,8 +459,35 @@ const LeadDetails: React.FC = () => {
     const state = location.state as ReturnState | null;
 
     if (state?.returnTo) {
-      if (state.returnTo.includes('?')) {
-        navigate(state.returnTo, { replace: true, state });
+      let targetUrl = state.returnTo;
+
+      const safeFilters = state.filters ? {
+        ...state.filters,
+        folder: (state.filters.folder || []).filter(f => !(defaultStatusOptions as string[]).includes(f))
+      } : undefined;
+
+      const safeState: ReturnState = {
+        ...state,
+        filters: safeFilters,
+        folderFilter: (state.folderFilter && !(defaultStatusOptions as string[]).includes(state.folderFilter)) ? state.folderFilter : undefined,
+        selectedFolder: (state.selectedFolder && !(defaultStatusOptions as string[]).includes(state.selectedFolder)) ? state.selectedFolder : undefined,
+        statusFilter: state.statusFilter || ((state.selectedFolder && (defaultStatusOptions as string[]).includes(state.selectedFolder)) ? state.selectedFolder : undefined)
+      };
+
+      if (targetUrl.includes('?')) {
+        const [path, search] = targetUrl.split('?');
+        const searchParams = new URLSearchParams(search);
+        const folder = searchParams.get('folder') || searchParams.get('folderFilter');
+        if (folder && (defaultStatusOptions as string[]).includes(folder)) {
+          searchParams.delete('folder');
+          searchParams.delete('folderFilter');
+          if (!searchParams.has('statusFilter') && !searchParams.has('status')) {
+            searchParams.set('statusFilter', folder);
+          }
+          const cleanQuery = searchParams.toString();
+          targetUrl = cleanQuery ? `${path}?${cleanQuery}` : path;
+        }
+        navigate(targetUrl, { replace: true, state: safeState });
         return;
       }
 
@@ -473,7 +500,9 @@ const LeadDetails: React.FC = () => {
       if (state.leadsPerPage && state.leadsPerPage !== 10) params.set('size', state.leadsPerPage.toString());
       if (state.searchQuery) params.set('search', state.searchQuery);
       if (state.statusFilter) params.set('statusFilter', state.statusFilter);
-      if (state.folderFilter) params.set('folderFilter', state.folderFilter);
+      if (state.folderFilter && !(defaultStatusOptions as string[]).includes(state.folderFilter)) {
+        params.set('folderFilter', state.folderFilter);
+      }
       if (state.filters?.status?.length) params.set('statusFilter', state.filters.status.join(','));
       if (state.filters?.source?.length) params.set('sourceFilter', state.filters.source.join(','));
       if (state.filters?.priority?.length) params.set('priorityFilter', state.filters.priority.join(','));
@@ -498,7 +527,7 @@ const LeadDetails: React.FC = () => {
       const queryString = params.toString();
       navigate(queryString ? `${state.returnTo}?${queryString}` : state.returnTo, {
         replace: true,
-        state
+        state: safeState
       });
       return;
     }

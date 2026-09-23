@@ -38,23 +38,34 @@ const AllLeads: React.FC = () => {
   const initialPage = Number.parseInt(searchParams.get('page') || '', 10) || returnState?.currentPage || 1;
   const initialPageSize = Number.parseInt(searchParams.get('size') || '', 10) || returnState?.leadsPerPage || 10;
   const initialSearch = searchParams.get('search') || returnState?.searchQuery || '';
-  
+
+  const isStatusName = (val?: string | null): boolean => {
+    if (!val) return false;
+    return (defaultStatusOptions as string[]).includes(val);
+  };
+
   const rawStatus = searchParams.get('statusFilter') || searchParams.get('status');
-  const initialFolderParam = searchParams.get('folder') || searchParams.get('folderFilter');
-  const isFolderActuallyStatus =
-    Boolean(initialFolderParam) &&
-    (initialFolderParam === rawStatus ||
-      (defaultStatusOptions as string[]).includes(initialFolderParam!));
+  const urlFolderParam = searchParams.get('folder') || searchParams.get('folderFilter');
+  const returnFolderCandidate = returnState?.filters?.folder?.[0] || returnState?.folderFilter || returnState?.selectedFolder;
 
-  const initialStatuses = rawStatus
+  const isUrlFolderStatus = Boolean(urlFolderParam) && (urlFolderParam === rawStatus || isStatusName(urlFolderParam));
+  const isReturnFolderStatus = Boolean(returnFolderCandidate) && isStatusName(returnFolderCandidate);
+
+  const initialStatuses: LeadStatus[] = rawStatus
     ? (rawStatus.split(',').filter(Boolean) as LeadStatus[])
-    : isFolderActuallyStatus
-    ? [initialFolderParam as LeadStatus]
-    : (returnState?.filters?.status as LeadStatus[]) || (returnState?.statusFilter ? [returnState.statusFilter as LeadStatus] : []);
+    : isUrlFolderStatus && urlFolderParam
+    ? [urlFolderParam as LeadStatus]
+    : (returnState?.filters?.status as LeadStatus[]) ||
+      (returnState?.statusFilter ? [returnState.statusFilter as LeadStatus] : []) ||
+      (isReturnFolderStatus && returnFolderCandidate ? [returnFolderCandidate as LeadStatus] : []);
 
-  const initialFolder = isFolderActuallyStatus
-    ? null
-    : initialFolderParam || returnState?.selectedFolder || returnState?.filters?.folder?.[0] || null;
+  const rawFolderCandidate = (!isUrlFolderStatus && urlFolderParam)
+    ? urlFolderParam
+    : (!isReturnFolderStatus && returnFolderCandidate)
+    ? returnFolderCandidate
+    : null;
+
+  const initialFolder = (rawFolderCandidate && !isStatusName(rawFolderCandidate)) ? rawFolderCandidate : null;
 
   const rawSources = searchParams.get('sourceFilter');
   const initialSources = rawSources
@@ -135,13 +146,17 @@ const AllLeads: React.FC = () => {
   });
   const [pendingBulkReminderStatus, setPendingBulkReminderStatus] = useState<LeadStatus | null>(null);
 
+  const safeReturnFolders = (returnState?.filters?.folder || []).filter(
+    (f: string) => Boolean(f) && !isStatusName(f)
+  );
+
   // Filter states
   const [filters, setFilters] = useState<LeadFilters>({
     status: initialStatuses,
     source: initialSources,
     priority: initialPriorities,
     assignedTo: initialAssigned,
-    folder: initialFolder ? [initialFolder] : (returnState?.filters?.folder || [])
+    folder: initialFolder ? [initialFolder] : safeReturnFolders
   });
 
   const sourceOptions: LeadSource[] = [
@@ -176,12 +191,12 @@ const AllLeads: React.FC = () => {
 
   useEffect(() => {
     // If URL has duplicate folder param matching a status, clean it from the URL
-    if (isFolderActuallyStatus && searchParams.has('folder')) {
+    if (isUrlFolderStatus && searchParams.has('folder')) {
       const cleanParams = new URLSearchParams(location.search);
       cleanParams.delete('folder');
       cleanParams.delete('folderFilter');
-      if (initialFolderParam && !cleanParams.has('statusFilter')) {
-        cleanParams.set('statusFilter', initialFolderParam);
+      if (urlFolderParam && !cleanParams.has('statusFilter') && !cleanParams.has('status')) {
+        cleanParams.set('statusFilter', urlFolderParam);
       }
       navigate(`${location.pathname}?${cleanParams.toString()}`, { replace: true });
     }
@@ -309,11 +324,16 @@ const AllLeads: React.FC = () => {
   const fetchLeads = async () => {
     try {
       setLoading(true);
-      const searchFilters = {
+      const cleanFolder = (filters.folder || []).filter(f => Boolean(f) && !isStatusName(f));
+      const searchFilters: LeadFilters = {
         ...filters,
+        folder: cleanFolder,
         ...getDateFilters(),
         ...(appliedSearchQuery ? { search: appliedSearchQuery } : {})
       };
+      if (!searchFilters.folder || searchFilters.folder.length === 0) {
+        delete searchFilters.folder;
+      }
       const response = await leadApi.getLeads(searchFilters, currentPage, leadsPerPage);
       
       if (response.success) {
@@ -455,16 +475,22 @@ const AllLeads: React.FC = () => {
   };
 
   const openLeadDetails = (leadId: string) => {
+    const cleanFolder = (filters.folder || []).filter(f => Boolean(f) && !isStatusName(f));
+    const sanitizedFilters = {
+      ...filters,
+      folder: cleanFolder
+    };
     navigate(`/leads/${leadId}`, {
       state: {
         returnTo: location.pathname + location.search,
         returnSearch: location.search,
         currentPage,
         leadsPerPage,
-        filters,
+        filters: sanitizedFilters,
         searchQuery: appliedSearchQuery || searchQuery,
         currentView,
-        selectedFolder,
+        selectedFolder: isStatusName(selectedFolder) ? null : selectedFolder,
+        statusFilter: isStatusName(selectedFolder) ? selectedFolder : (filters.status?.[0] || undefined),
         createdDateRange,
         modifiedDateRange
       }

@@ -29,8 +29,8 @@ import type {
   ZoomPhoneNumberAssignmentsResponse,
   ZoomPhoneStatus,
   ZoomTalkTimeResponse,
-
 } from '../types';
+import { defaultStatusOptions } from '../types';
 
 const isLoopbackHost = (hostname: string) => hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
 
@@ -311,7 +311,17 @@ export const leadApi = {
             params.append('assignedTo', 'null');
             return;
           }
-  
+
+          // ✅ FIX: Do not allow status names to be passed as folder filter
+          if (key === 'folder') {
+            const rawFolders = Array.isArray(value) ? value : [value];
+            const cleanFolders = rawFolders.filter(
+              f => f && !(defaultStatusOptions as string[]).includes(f.toString())
+            );
+            cleanFolders.forEach(v => params.append('folder', v.toString()));
+            return;
+          }
+
           if (value !== undefined && value !== null) {
   
             // ✅ KEEP: array support (UNCHANGED)
@@ -539,7 +549,7 @@ getAllChats: async (
       if (page) params.append('page', page.toString());
       if (limit) params.append('limit', limit.toString());
       if (status) params.append('status', status);
-      if (folder) params.append('folder', folder);
+      if (folder && !(defaultStatusOptions as string[]).includes(folder)) params.append('folder', folder);
       if (search) params.append('search', search);
       appendLeadDateParams(params, dateFilters);
 

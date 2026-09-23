@@ -34,14 +34,30 @@ const MyLeads: React.FC = () => {
   const initialPageSize = Number.parseInt(searchParams.get('size') || '', 10) || returnState?.leadsPerPage || 10;
   const initialSearch = searchParams.get('search') || returnState?.searchQuery || '';
 
-  const rawStatus = (searchParams.get('status') || searchParams.get('statusFilter') || returnState?.statusFilter || returnState?.filters?.status?.[0] || '') as LeadStatus | '';
-  const rawFolderParam = searchParams.get('folder') || searchParams.get('folderFilter') || returnState?.folderFilter || returnState?.selectedFolder || '';
-  const isFolderActuallyStatus =
-    Boolean(rawFolderParam) &&
-    (rawFolderParam === rawStatus || (defaultStatusOptions as string[]).includes(rawFolderParam));
+  const isStatusName = (val?: string | null): boolean => {
+    if (!val) return false;
+    return (defaultStatusOptions as string[]).includes(val);
+  };
 
-  const initialStatus = (rawStatus || (isFolderActuallyStatus ? (rawFolderParam as LeadStatus) : '')) as LeadStatus | '';
-  const initialFolder = isFolderActuallyStatus ? '' : rawFolderParam;
+  const rawStatus = (searchParams.get('status') || searchParams.get('statusFilter') || returnState?.statusFilter || returnState?.filters?.status?.[0] || '') as LeadStatus | '';
+  const urlFolderParam = searchParams.get('folder') || searchParams.get('folderFilter');
+  const returnFolderCandidate = returnState?.folderFilter || returnState?.selectedFolder;
+
+  const isUrlFolderStatus = Boolean(urlFolderParam) && (urlFolderParam === rawStatus || isStatusName(urlFolderParam));
+  const isReturnFolderStatus = Boolean(returnFolderCandidate) && isStatusName(returnFolderCandidate);
+
+  const initialStatus = (rawStatus || 
+    (isUrlFolderStatus && urlFolderParam ? (urlFolderParam as LeadStatus) : '') || 
+    (isReturnFolderStatus && returnFolderCandidate ? (returnFolderCandidate as LeadStatus) : '')
+  ) as LeadStatus | '';
+
+  const rawFolderCandidate = (!isUrlFolderStatus && urlFolderParam)
+    ? urlFolderParam
+    : (!isReturnFolderStatus && returnFolderCandidate)
+    ? returnFolderCandidate
+    : '';
+
+  const initialFolder = (rawFolderCandidate && !isStatusName(rawFolderCandidate)) ? rawFolderCandidate : '';
 
   const initialCreatedFrom =
     searchParams.get('createdFromDate') ||
@@ -122,11 +138,11 @@ const MyLeads: React.FC = () => {
         returnSearch: location.search,
         currentPage,
         leadsPerPage,
-        statusFilter: statusFilter || undefined,
-        folderFilter: folderFilter || undefined,
+        statusFilter: isStatusName(selectedFolder) ? selectedFolder : (statusFilter || undefined),
+        folderFilter: isStatusName(folderFilter) ? undefined : (folderFilter || undefined),
         searchQuery: appliedSearchQuery || searchQuery,
         currentView,
-        selectedFolder: selectedFolder || undefined,
+        selectedFolder: isStatusName(selectedFolder) ? undefined : (selectedFolder || undefined),
         createdDateRange,
         modifiedDateRange
       }
@@ -134,12 +150,12 @@ const MyLeads: React.FC = () => {
   };
 
   useEffect(() => {
-    if (isFolderActuallyStatus && searchParams.has('folder')) {
+    if (isUrlFolderStatus && searchParams.has('folder')) {
       const cleanParams = new URLSearchParams(location.search);
       cleanParams.delete('folder');
       cleanParams.delete('folderFilter');
-      if (rawFolderParam && !cleanParams.has('status') && !cleanParams.has('statusFilter')) {
-        cleanParams.set('status', rawFolderParam);
+      if (urlFolderParam && !cleanParams.has('status') && !cleanParams.has('statusFilter')) {
+        cleanParams.set('status', urlFolderParam);
       }
       navigate(`${location.pathname}?${cleanParams.toString()}`, { replace: true });
     }
@@ -260,12 +276,15 @@ const MyLeads: React.FC = () => {
     try {
       setLoading(true);
       
+      const safeFolder = isStatusName(folderFilter) ? undefined : (folderFilter || undefined);
+      const safeStatus = statusFilter || (isStatusName(selectedFolder) ? (selectedFolder as LeadStatus) : undefined);
+
       // Pass filters to the API for server-side filtering
       const response = await leadApi.getMyLeads(
         currentPage, 
         leadsPerPage, 
-        statusFilter || undefined, 
-        folderFilter || undefined, 
+        safeStatus, 
+        safeFolder, 
         appliedSearchQuery || undefined,
         getDateFilters()
       );

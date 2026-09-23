@@ -128,6 +128,21 @@ export type LeadSource =
 // LeadStatus is now dynamic - fetched from API
 export type LeadStatus = string;
 
+export const defaultStatusOptions: LeadStatus[] = [
+  'New',
+  'Contacted',
+  'Follow-up',
+  'Interested',
+  'Qualified',
+  'Proposal Sent',
+  'Negotiating',
+  'Sales Done',
+  'DNP',
+  'Not Interested',
+  'Wrong Number',
+  'Call Back'
+];
+
 export type LeadPriority = 'High' | 'Medium' | 'Low';
 
 // Status Management Types
