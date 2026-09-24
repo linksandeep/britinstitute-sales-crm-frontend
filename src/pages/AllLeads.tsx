@@ -21,6 +21,7 @@ import {
   Calendar,
   RefreshCw,
   FolderOpen,
+  Link2,
   ArrowLeft,
   Target,
   Settings,
@@ -511,6 +512,7 @@ const AllLeads: React.FC = () => {
   };
 
   const handleSelectLead = (leadId: string) => {
+    if (leads.find((lead) => lead._id === leadId)?.isRetargeting) return;
     setSelectedLeads(prev =>
       prev.includes(leadId)
         ? prev.filter(id => id !== leadId)
@@ -519,10 +521,11 @@ const AllLeads: React.FC = () => {
   };
 
   const handleSelectAll = () => {
+    const selectableLeadIds = leads.filter((lead) => !lead.isRetargeting).map((lead) => lead._id);
     setSelectedLeads(
-      selectedLeads.length === leads.length 
+      selectedLeads.length === selectableLeadIds.length && selectableLeadIds.length > 0
         ? [] 
-        : leads.map(lead => lead._id)
+        : selectableLeadIds
     );
   };
 
@@ -1134,7 +1137,10 @@ const AllLeads: React.FC = () => {
                 <th className="whitespace-nowrap">
                   <input
                     type="checkbox"
-                    checked={selectedLeads.length === leads.length && leads.length > 0}
+                    checked={
+                      selectedLeads.length > 0 &&
+                      selectedLeads.length === leads.filter((lead) => !lead.isRetargeting).length
+                    }
                     onChange={handleSelectAll}
                   />
                 </th>
@@ -1152,18 +1158,28 @@ const AllLeads: React.FC = () => {
                 <tr 
                   key={lead._id} 
                   className={`transition-colors cursor-pointer ${getPriorityRowColor(lead.priority)}`}
-                  onClick={() => openLeadDetails(lead._id)}
+                  onClick={() => openLeadDetails(lead.linkedLeadId || lead._id)}
                 >
                   <td className="whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
                     <input
                       type="checkbox"
                       checked={selectedLeads.includes(lead._id)}
                       onChange={() => handleSelectLead(lead._id)}
+                      disabled={lead.isRetargeting}
+                      title={lead.isRetargeting ? 'Retargeting entries link to the existing lead' : undefined}
                     />
                   </td>
                   <td className="whitespace-nowrap">
                     <div>
-                      <div className="font-medium text-gray-900">{lead.name}</div>
+                      <div className="flex items-center gap-2 font-medium text-gray-900">
+                        {lead.name}
+                        {lead.isRetargeting && (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-fuchsia-100 px-2 py-0.5 text-xs font-semibold text-fuchsia-800">
+                            <Link2 className="h-3 w-3" />
+                            Retargeting
+                          </span>
+                        )}
+                      </div>
                       <div className="text-sm text-gray-500">{lead.position}</div>
                     </div>
                   </td>
@@ -1230,14 +1246,14 @@ const AllLeads: React.FC = () => {
                   <td className="whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
                     <div className="flex items-center gap-2">
                       <button
-                        onClick={() => openLeadDetails(lead._id)}
+                        onClick={() => openLeadDetails(lead.linkedLeadId || lead._id)}
                         className="text-blue-600 hover:text-blue-800"
-                        title="View"
+                        title={lead.isRetargeting ? 'Open existing lead stages and conversation' : 'View'}
                       >
-                        <Eye className="w-4 h-4" />
+                        {lead.isRetargeting ? <Link2 className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                       </button>
 
-                      {user?.role === 'admin' && (
+                      {user?.role === 'admin' && !lead.isRetargeting && (
                         <button
                           onClick={() => handleDeleteLead(lead)}
                           className="text-red-600 hover:text-red-800"

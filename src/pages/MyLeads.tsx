@@ -18,6 +18,7 @@ import {
   Target,
   TrendingUp,
   FolderOpen,
+  Link2,
   ArrowLeft,
   Eye,
   CheckCircle
@@ -367,6 +368,7 @@ const MyLeads: React.FC = () => {
   };
 
   const handleSelectLead = (leadId: string) => {
+    if (leads.find((lead) => lead._id === leadId)?.isRetargeting) return;
     setSelectedLeads(prev =>
       prev.includes(leadId)
         ? prev.filter(id => id !== leadId)
@@ -375,10 +377,11 @@ const MyLeads: React.FC = () => {
   };
 
   const handleSelectAll = () => {
+    const selectableLeadIds = leads.filter((lead) => !lead.isRetargeting).map((lead) => lead._id);
     setSelectedLeads(
-      selectedLeads.length === leads.length 
+      selectedLeads.length === selectableLeadIds.length && selectableLeadIds.length > 0
         ? [] 
-        : leads.map(lead => lead._id)
+        : selectableLeadIds
     );
   };
 
@@ -893,7 +896,10 @@ const MyLeads: React.FC = () => {
                   <th className="whitespace-nowrap font-semibold text-gray-900">
                     <input
                       type="checkbox"
-                      checked={selectedLeads.length === leads.length && leads.length > 0}
+                      checked={
+                        selectedLeads.length > 0 &&
+                        selectedLeads.length === leads.filter((lead) => !lead.isRetargeting).length
+                      }
                       onChange={handleSelectAll}
                       className="mr-2"
                     />
@@ -916,13 +922,15 @@ const MyLeads: React.FC = () => {
                     className={`hover:bg-gray-50 transition-colors cursor-pointer ${
                       selectedLeads.includes(lead._id) ? 'bg-blue-50' : index % 2 === 0 ? 'bg-white' : 'bg-gray-25'
                     }`}
-                    onClick={() => openLeadDetails(lead._id)}
+                    onClick={() => openLeadDetails(lead.linkedLeadId || lead._id)}
                   >
                     <td className="whitespace-nowrap py-4 px-6" onClick={(e) => e.stopPropagation()}>
                       <input
                         type="checkbox"
                         checked={selectedLeads.includes(lead._id)}
                         onChange={() => handleSelectLead(lead._id)}
+                        disabled={lead.isRetargeting}
+                        title={lead.isRetargeting ? 'Retargeting entries link to the existing lead' : undefined}
                       />
                     </td>
                     <td className="whitespace-nowrap py-4 px-6">
@@ -931,6 +939,13 @@ const MyLeads: React.FC = () => {
   <span className="font-medium text-gray-900 text-sm">
     {lead.name}
   </span>
+
+  {lead.isRetargeting && (
+    <span className="inline-flex items-center gap-1 rounded-full bg-fuchsia-100 px-2 py-0.5 text-xs font-semibold text-fuchsia-800">
+      <Link2 className="h-3 w-3" />
+      Retargeting
+    </span>
+  )}
 
   {(lead.assignmentCount ?? 0) > 1 && (
     <button
@@ -979,25 +994,34 @@ const MyLeads: React.FC = () => {
                       </div>
                     </td>
                     <td className="whitespace-nowrap py-4 px-6" onClick={(e) => e.stopPropagation()}>
-                      <select
-                        value={lead.status}
-                        onChange={(e) => updateLeadStatus(lead._id, e.target.value as LeadStatus)}
-                        className={`px-3 py-2 rounded-full text-xs font-medium border-0 min-w-[140px] cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all ${getStatusColor(lead.status)}`}
-                        style={{
-                          appearance: 'none',
-                          backgroundImage: `url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6,9 12,15 18,9'%3e%3c/polyline%3e%3c/svg%3e")`,
-                          backgroundRepeat: 'no-repeat',
-                          backgroundPosition: 'right 8px center',
-                          backgroundSize: '12px',
-                          paddingRight: '30px'
-                        }}
-                      >
-                        {statusOptions.map(status => (
-                          <option key={status} value={status} className="text-gray-900 bg-white">
-                            {status}
-                          </option>
-                        ))}
-                      </select>
+                      {lead.isRetargeting ? (
+                        <div>
+                          <span className={`inline-flex rounded-full px-3 py-2 text-xs font-medium ${getStatusColor(lead.status)}`}>
+                            {lead.status}
+                          </span>
+                          <div className="mt-1 text-xs text-gray-500">Existing lead stage</div>
+                        </div>
+                      ) : (
+                        <select
+                          value={lead.status}
+                          onChange={(e) => updateLeadStatus(lead._id, e.target.value as LeadStatus)}
+                          className={`px-3 py-2 rounded-full text-xs font-medium border-0 min-w-[140px] cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all ${getStatusColor(lead.status)}`}
+                          style={{
+                            appearance: 'none',
+                            backgroundImage: `url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6,9 12,15 18,9'%3e%3c/polyline%3e%3c/svg%3e")`,
+                            backgroundRepeat: 'no-repeat',
+                            backgroundPosition: 'right 8px center',
+                            backgroundSize: '12px',
+                            paddingRight: '30px'
+                          }}
+                        >
+                          {statusOptions.map(status => (
+                            <option key={status} value={status} className="text-gray-900 bg-white">
+                              {status}
+                            </option>
+                          ))}
+                        </select>
+                      )}
                     </td>
                     <td className="whitespace-nowrap py-4 px-6">
                       <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
@@ -1032,11 +1056,11 @@ const MyLeads: React.FC = () => {
                     </td>
                     <td className="whitespace-nowrap py-4 px-6" onClick={(e) => e.stopPropagation()}>
                       <button
-                        onClick={() => openLeadDetails(lead._id)}
+                        onClick={() => openLeadDetails(lead.linkedLeadId || lead._id)}
                         className="text-blue-600 hover:text-blue-800 hover:bg-blue-50 p-2 rounded-full transition-colors"
-                        title="View Details"
+                        title={lead.isRetargeting ? 'Open existing lead stages and conversation' : 'View Details'}
                       >
-                        <Eye className="w-4 h-4" />
+                        {lead.isRetargeting ? <Link2 className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                       </button>
                     </td>
                   </tr>

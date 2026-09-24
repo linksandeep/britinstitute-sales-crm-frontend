@@ -87,6 +87,19 @@ export interface Lead {
   metaFeedbackLastSentAt?: string;
   metaFeedbackLastError?: string;
 
+  label?: string;
+  labels?: string[];
+  isRetargeting?: boolean;
+  linkedLeadId?: string;
+  linkedLead?: {
+    _id: string;
+    name: string;
+    status: LeadStatus;
+    folder?: string;
+    assignedTo?: string;
+  };
+  matchReason?: 'EMAIL_EXISTS' | 'PHONE_EXISTS' | 'EMAIL_PHONE_EXISTS';
+
   assignedTo?: string;
   assignedBy?: string;
   assignedToUser?: User;
